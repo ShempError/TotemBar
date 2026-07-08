@@ -1,9 +1,10 @@
 -- TotemBar - ui.lua
--- The totem bar frame: 4 element buttons plus a Totemic Recall button,
--- and a small custom dropdown list (not UIDropDownMenu, to stay
--- dependency-free and avoid its global-name plumbing) for picking
--- which known totem fills each element's slot. Each element button
--- also carries an OmniCC-style remaining-duration timer text (hybrid
+-- The totem bar frame: 4 element buttons plus a Totemic Recall button.
+-- Left-click an element button to cast its chosen totem; right-click
+-- clears the slot. Hovering an element button pops an upward flyout of
+-- the element's other known totems: left-click one to cast it once,
+-- right-click one to set it as the slot's new default. Each element
+-- button also carries an OmniCC-style remaining-duration timer text (hybrid
 -- source: pfUI libtotem's GetTotemInfo when present, else TotemBar's
 -- own cast-tracking - see core/cast.lua). No per-button text labels;
 -- hover the button for a tooltip naming the element/totem. WoW-API-only
@@ -18,7 +19,6 @@ local ChatOut = DEFAULT_CHAT_FRAME or ChatFrame1
 
 local BUTTON_SIZE = 36
 local BUTTON_GAP = 4
-local MAX_DROPDOWN_ROWS = 8
 
 -- Timer-text OnUpdate throttle: refresh at most this often (seconds),
 -- not every frame, to keep the shared/guild-addon perf budget sane.
@@ -34,20 +34,14 @@ local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local RECALL_SPELL_NAME = "Totemic Recall"
 local RECALL_ICON_FALLBACK = "Interface\\Icons\\Spell_Nature_AstralRecal"
 
-local DROPDOWN_HIDE_INTERVAL = 0.1  -- throttle for the mouse-leave hide check
-
 local elementButtons = {}         -- element -> button frame
-local dropdownRows = {}           -- pooled dropdown row buttons (created once)
-local dropdownFrame = nil         -- lazily created custom dropdown frame
-local dropdownElement = nil       -- element currently shown in the dropdown
-local dropdownOwnerButton = nil   -- button that opened the dropdown
-local dropdownElapsed = 0         -- throttle accumulator for the hide check
 
 -- Hover flyout: hovering an element button pops a column of icon
 -- buttons UPWARD for the OTHER known totems of that element (all known
--- for the element minus the currently-chosen default). Clicking one
--- casts it ONCE without changing the slot's default. Shares one frame +
--- a pool of icon buttons, mirroring the dropdown pattern above.
+-- for the element minus the currently-chosen default). Left-click one to
+-- cast it ONCE without changing the slot's default; right-click one to
+-- make it the slot's new default. Shares one frame + a pool of icon
+-- buttons.
 local MAX_FLYOUT_ICONS = 6         -- most totems any single element has
 local FLYOUT_PAD = 4               -- inner padding inside the flyout frame
 local FLYOUT_GAP = 2               -- gap between element button top and flyout bottom
@@ -63,10 +57,6 @@ local flyoutElapsed = 0        -- throttle accumulator for the hide check
 -- closures created earlier in the file (standard Lua forward-decl idiom:
 -- `local foo` then later `foo = function() ... end` / `function foo()`).
 local RefreshButton
-local EnsureDropdownFrame
-local ShowDropdown
-local HideDropdown
-local OnDropdownUpdate
 local EnsureFlyoutFrame
 local ShowFlyout
 local HideFlyout
@@ -134,137 +124,6 @@ RefreshButton = function(element)
     btn.icon:SetTexture(GetElementIcon(element))
 end
 
-EnsureDropdownFrame = function()
-    if dropdownFrame then
-        return dropdownFrame
-    end
-
-    local f = CreateFrame("Frame", "TotemBarDropdown", UIParent)
-    f:SetWidth(160)
-    f:SetHeight(10)
-    f:SetFrameStrata("DIALOG")
-    f:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    f:SetBackdropColor(0, 0, 0, 1)
-    f:EnableMouse(true)         -- so padding between rows still counts as "over the dropdown"
-    f:SetClampedToScreen(true)
-    f:Hide()
-
-    for i = 1, MAX_DROPDOWN_ROWS do
-        local row = CreateFrame("Button", "TotemBarDropdownRow" .. i, f)
-        row:SetWidth(150)
-        row:SetHeight(16)
-        row:SetPoint("TOP", f, "TOP", 0, -6 - (i - 1) * 16)
-
-        local text = row:CreateFontString("TotemBarDropdownRow" .. i .. "Text", "OVERLAY", "GameFontNormalSmall")
-        text:SetPoint("LEFT", row, "LEFT", 4, 0)
-        text:SetJustifyH("LEFT")
-        row.text = text
-
-        local hi = row:CreateTexture(nil, "HIGHLIGHT")
-        hi:SetAllPoints(row)
-        hi:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-        hi:SetBlendMode("ADD")
-
-        row:SetScript("OnClick", function()
-            if dropdownElement then
-                if row.totemName == false then
-                    TotemBarDB.chosen[dropdownElement] = nil
-                elseif row.totemName then
-                    TotemBarDB.chosen[dropdownElement] = row.totemName
-                end
-                RefreshButton(dropdownElement)
-            end
-            HideDropdown()
-        end)
-
-        row:Hide()
-        dropdownRows[i] = row
-    end
-
-    -- OnUpdate only fires while the frame is shown, so this hide-check
-    -- naturally stops running once the dropdown is hidden.
-    f:SetScript("OnUpdate", OnDropdownUpdate)
-
-    dropdownFrame = f
-    return f
-end
-
-ShowDropdown = function(button, element)
-    local f = EnsureDropdownFrame()
-    dropdownElement = element
-    dropdownOwnerButton = button
-    dropdownElapsed = 0
-
-    local db = TotemBarDB
-    local spellNames = TotemBar.scanSpellbook()
-    local known = TotemBar.knownTotems(spellNames, element)
-
-    local rowIndex = 1
-
-    if db.chosen[element] then
-        local row = dropdownRows[rowIndex]
-        row.text:SetText("(none)")
-        row.totemName = false
-        row:Show()
-        rowIndex = rowIndex + 1
-    end
-
-    for i = 1, table.getn(known) do
-        if rowIndex <= MAX_DROPDOWN_ROWS then
-            local row = dropdownRows[rowIndex]
-            row.text:SetText(known[i])
-            row.totemName = known[i]
-            row:Show()
-            rowIndex = rowIndex + 1
-        end
-    end
-
-    if rowIndex == 1 then
-        local row = dropdownRows[1]
-        row.text:SetText("No known totems")
-        row.totemName = nil
-        row:Show()
-        rowIndex = 2
-    end
-
-    for j = rowIndex, MAX_DROPDOWN_ROWS do
-        dropdownRows[j]:Hide()
-    end
-
-    f:SetHeight(10 + (rowIndex - 1) * 16)
-    f:ClearAllPoints()
-    f:SetPoint("TOP", button, "BOTTOM", 0, -2)
-    f:Show()
-end
-
-HideDropdown = function()
-    if dropdownFrame then
-        dropdownFrame:Hide()
-    end
-    dropdownOwnerButton = nil
-end
-
--- Throttled mouse-leave check for the right-click dropdown: hide it once
--- the cursor is over NEITHER the dropdown NOR the button that opened it
--- (mirrors OnFlyoutUpdate). Row clicks still hide it directly. No
--- per-frame allocation - just the accumulator and two MouseIsOver checks.
-OnDropdownUpdate = function()
-    dropdownElapsed = dropdownElapsed + arg1
-    if dropdownElapsed < DROPDOWN_HIDE_INTERVAL then
-        return
-    end
-    dropdownElapsed = 0
-    if MouseIsOver(dropdownFrame) or (dropdownOwnerButton and MouseIsOver(dropdownOwnerButton)) then
-        return
-    end
-    HideDropdown()
-end
-
 -- Lazily builds the single shared flyout frame plus its pool of icon
 -- buttons (TotemBarFlyoutIcon1..MAX_FLYOUT_ICONS), stacked bottom-up so
 -- ShowFlyout can just Show the first N. DIALOG strata so it draws above
@@ -314,13 +173,28 @@ EnsureFlyoutFrame = function()
         ico.icon = icon
 
         ico:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        ico:RegisterForClicks("LeftButtonUp")
+        ico:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
-        -- Cast once for the element the flyout is currently showing.
-        -- recordCast() drives THAT element's timer to the actually-cast
-        -- totem, without touching the slot's chosen default.
+        -- Left-click: cast once for the element the flyout is currently
+        -- showing. recordCast() drives THAT element's timer to the
+        -- actually-cast totem, without touching the slot's chosen
+        -- default. Right-click: make this totem the slot's new chosen
+        -- default and re-populate the flyout in place (so the
+        -- newly-chosen totem drops out of the "others" list and the
+        -- previously-chosen one appears), keeping the flyout open.
         ico:SetScript("OnClick", function()
-            if this.totemName and flyoutElement then
+            if not (this.totemName and flyoutElement) then
+                return
+            end
+            if arg1 == "RightButton" then
+                local element = flyoutElement
+                local owner = flyoutOwnerButton
+                TotemBarDB.chosen[element] = this.totemName
+                RefreshButton(element)
+                if owner then
+                    ShowFlyout(owner, element)
+                end
+            else
                 CastSpellByName(this.totemName)
                 TotemBar.recordCast(flyoutElement, this.totemName)
             end
@@ -330,6 +204,7 @@ EnsureFlyoutFrame = function()
             if this.totemName then
                 GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
                 GameTooltip:SetText(this.totemName)
+                GameTooltip:AddLine("Left-click: cast  /  Right-click: set default", 1, 1, 1)
                 GameTooltip:Show()
             end
         end)
@@ -477,10 +352,14 @@ CreateElementButton = function(element, index)
     btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     btn.element = element
 
+    -- Left-click casts the slot's chosen totem. Right-click clears the
+    -- slot (sets no default); picking a new default happens via the
+    -- hover flyout's right-click instead (see EnsureFlyoutFrame above).
     btn:SetScript("OnClick", function()
         local clickedElement = this.element
         if arg1 == "RightButton" then
-            ShowDropdown(this, clickedElement)
+            TotemBarDB.chosen[clickedElement] = nil
+            RefreshButton(clickedElement)
         else
             local db = TotemBarDB
             local totemName = db and db.chosen and db.chosen[clickedElement]
@@ -488,7 +367,7 @@ CreateElementButton = function(element, index)
                 CastSpellByName(totemName)
                 TotemBar.recordCast(clickedElement, totemName)
             else
-                ChatOut:AddMessage("TotemBar: no totem chosen for " .. clickedElement .. " (right-click to choose)")
+                ChatOut:AddMessage("TotemBar: no totem chosen for " .. clickedElement .. " (hover for known totems, right-click one to set it as default)")
             end
         end
     end)
@@ -499,8 +378,10 @@ CreateElementButton = function(element, index)
         GameTooltip:SetOwner(this, "ANCHOR_TOP")
         if totemName then
             GameTooltip:SetText(totemName)
+            GameTooltip:AddLine("Left-click: cast  /  Right-click: clear", 1, 1, 1)
         else
-            GameTooltip:SetText(this.element .. " (empty - right-click to choose)")
+            GameTooltip:SetText(this.element .. " (empty)")
+            GameTooltip:AddLine("Hover for known totems, right-click one to set default", 1, 1, 1)
         end
         GameTooltip:Show()
         -- Pop the "cast one of the others" flyout above this button.
