@@ -621,18 +621,26 @@ end
 
 -- "/tb scan" dev-aid: one-shot print of every spellbook entry that looks
 -- like a totem, so the static element map in core/totemdata.lua can be
--- checked against the live TurtleWoW client. No file I/O, no telemetry.
+-- checked against the live TurtleWoW client. Also writes the list to
+-- C:\turtle\imports\totembar_scan.txt via SuperWoW's ExportFile (when
+-- present) so it can be read off-client without pasting from chat.
 function TotemBar.PrintScan()
     local names = TotemBar.scanSpellbook()
     local count = 0
+    local dump = ""
     ChatOut:AddMessage("TotemBar: scanning spellbook for totems...")
     for i = 1, table.getn(names) do
         if string.find(names[i], "Totem", 1, true) then
             ChatOut:AddMessage("  " .. names[i])
+            dump = dump .. names[i] .. "\n"
             count = count + 1
         end
     end
     ChatOut:AddMessage("TotemBar: " .. count .. " totem spell(s) found.")
+    -- ExportFile appends .txt itself; pass the name WITHOUT extension.
+    if ExportFile then
+        ExportFile("totembar_scan", "totems=" .. count .. "\n" .. dump)
+    end
 end
 
 local function HandleSlashCommand(msg)
