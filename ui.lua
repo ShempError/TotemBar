@@ -216,12 +216,30 @@ CreateElementButton = function(element, index)
     btn:SetHeight(BUTTON_SIZE)
     btn:SetPoint("LEFT", TotemBarFrame, "LEFT", (index - 1) * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP, 0)
 
+    -- Opaque dark fill + thin border behind the icon. Replaces the old
+    -- UI-Quickslot2 normal texture, whose beveled square bled THROUGH
+    -- transparent regions of icon art (rendering a little empty box over
+    -- the icon). A solid black backdrop under the ARTWORK-layer icon
+    -- makes those transparent regions read as flat dark instead.
+    btn:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    btn:SetBackdropColor(0, 0, 0, 1)   -- opaque black fill behind the icon
+
     local icon = btn:CreateTexture(name .. "Icon", "ARTWORK")
-    -- Inset a few px so the UI-Quickslot2 border (set below) actually
-    -- frames the icon instead of being fully covered by it.
-    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
-    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+    -- Inset so the icon sits just inside the backdrop border, letting
+    -- the opaque black fill show through any transparent icon regions.
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 3, -3)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 3)
     icon:SetTexture(GetElementIcon(element))
+    -- Crop the icon's built-in ~8% border (standard action-button
+    -- treatment). Without this, icons whose art carries a visible edge
+    -- render a little empty frame over the button. SetTexCoord persists
+    -- across later SetTexture calls (RefreshButton), so set it once here.
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn.icon = icon
 
     -- OmniCC-style remaining-duration text, centered on the icon.
@@ -237,7 +255,9 @@ CreateElementButton = function(element, index)
     btn.timerLastText = nil        -- cached last string, avoid redundant SetText
     btn.timerLastLow = nil         -- cached last <=5s tint state, avoid redundant SetTextColor
 
-    btn:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+    -- No normal texture: UI-Quickslot2's bevel bleeds through
+    -- transparent icon art (see backdrop above). Pushed/highlight only
+    -- appear on click/hover, so they don't bleed.
     btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
     btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
@@ -288,13 +308,25 @@ CreateRecallButton = function(index)
     btn:SetHeight(BUTTON_SIZE)
     btn:SetPoint("LEFT", TotemBarFrame, "LEFT", (index - 1) * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP, 0)
 
+    -- Opaque dark fill + thin border (same as element buttons); see the
+    -- comment in CreateElementButton for why this replaces UI-Quickslot2.
+    btn:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    btn:SetBackdropColor(0, 0, 0, 1)   -- opaque black fill behind the icon
+
     local icon = btn:CreateTexture(name .. "Icon", "ARTWORK")
-    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
-    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 3, -3)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 3)
     icon:SetTexture(GetRecallIcon())
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn.icon = icon
 
-    btn:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+    -- No normal texture (UI-Quickslot2 bevel bleeds through transparent
+    -- icon art). Pushed/highlight only show on click/hover, no bleed.
     btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
     btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
