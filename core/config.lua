@@ -11,12 +11,18 @@ TotemBarDB = TotemBarDB or {}
 --   chosen[element]  = totemName ("Fire" -> "Searing Totem", ...)
 --   gapSeconds       = spam-cycle reset gap (seconds)
 --   locked           = boolean, whether the bar can be dragged
+--   autoRecall       = boolean, whether recallAndCastAll() prepends
+--                       Totemic Recall (toggled via the Recall button's
+--                       right-click, see ui.lua); default ON
 --   point/relPoint/x/y = saved frame anchor (see ui.lua)
 function TotemBar.ensureDefaults()
     TotemBarDB.chosen = TotemBarDB.chosen or {}
     TotemBarDB.gapSeconds = TotemBarDB.gapSeconds or TotemBar.DEFAULT_GAP_SECONDS
     if TotemBarDB.locked == nil then
         TotemBarDB.locked = false
+    end
+    if TotemBarDB.autoRecall == nil then
+        TotemBarDB.autoRecall = true
     end
     TotemBarDB.point = TotemBarDB.point or "CENTER"
     TotemBarDB.relPoint = TotemBarDB.relPoint or "CENTER"

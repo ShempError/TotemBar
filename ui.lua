@@ -7,9 +7,13 @@
 -- button also carries an OmniCC-style remaining-duration timer text (hybrid
 -- source: pfUI libtotem's GetTotemInfo when present, else TotemBar's
 -- own cast-tracking - see core/cast.lua). No per-button text labels;
--- hover the button for a tooltip naming the element/totem. WoW-API-only
--- file; not offline-tested, only syntax-checked (see tools/luatests
--- notes in the repo).
+-- hover the button for a tooltip naming the element/totem. Each element
+-- button also carries a native action-button-style radial cooldown
+-- swipe (CooldownFrameTemplate) reflecting the chosen totem's spellbook
+-- cooldown, IN ADDITION to the duration timer text. The Recall button's
+-- icon pulses whenever any element totem is currently out of range.
+-- WoW-API-only file; not offline-tested, only syntax-checked (see
+-- tools/luatests notes in the repo).
 
 TotemBar = TotemBar or {}
 
@@ -35,6 +39,13 @@ local RECALL_SPELL_NAME = "Totemic Recall"
 local RECALL_ICON_FALLBACK = "Interface\\Icons\\Spell_Nature_AstralRecal"
 
 local elementButtons = {}         -- element -> button frame
+local recallButton = nil          -- Totemic Recall button frame (for the auto-recall indicator refresh)
+
+-- True when ANY element's totem is currently out-of-range (the
+-- buff-presence red tint, see UpdateTimerDisplays). Recomputed once per
+-- UpdateTimerDisplays pass; drives the Recall button's icon pulse
+-- (OnRecallUpdate below) as a "go recall + redeploy" visual prompt.
+local anyOutOfRange = false
 
 -- Hover flyout: hovering an element button pops a column of icon
 -- buttons UPWARD for the OTHER known totems of that element (all known
@@ -57,12 +68,16 @@ local flyoutElapsed = 0        -- throttle accumulator for the hide check
 -- closures created earlier in the file (standard Lua forward-decl idiom:
 -- `local foo` then later `foo = function() ... end` / `function foo()`).
 local RefreshButton
+local RefreshCooldown
 local EnsureFlyoutFrame
 local ShowFlyout
+local RefreshFlyoutCooldowns
 local HideFlyout
 local OnFlyoutUpdate
 local CreateElementButton
 local CreateRecallButton
+local RefreshRecallIndicator
+local OnRecallUpdate
 local UpdateTimerDisplays
 local OnBarUpdate
 local OnDragStart
@@ -122,6 +137,31 @@ RefreshButton = function(element)
         return
     end
     btn.icon:SetTexture(GetElementIcon(element))
+    RefreshCooldown(element)
+end
+
+-- Refreshes element `element`'s native cooldown swipe (the same radial
+-- CooldownFrameTemplate widget standard action buttons use) to match its
+-- currently-chosen totem's spellbook cooldown. Clears the swipe (start=0)
+-- when the slot is empty or unresolved. Called from RefreshButton (i.e.
+-- on selection changes and once at bar-build time) and from the
+-- SPELL_UPDATE_COOLDOWN event handler below - NEVER from the per-tick
+-- timer OnUpdate, since re-calling CooldownFrame_SetTimer every tick
+-- would restart the swipe's animation instead of letting it play.
+RefreshCooldown = function(element)
+    local btn = elementButtons[element]
+    if not btn then
+        return
+    end
+    local db = TotemBarDB
+    local totemName = db and db.chosen and db.chosen[element]
+    local idx = totemName and FindSpellIndexByName(totemName)
+    if not idx then
+        CooldownFrame_SetTimer(btn.cd, 0, 0, 0)
+        return
+    end
+    local start, duration, enable = GetSpellCooldown(idx, BOOKTYPE_SPELL)
+    CooldownFrame_SetTimer(btn.cd, start, duration, enable)
 end
 
 -- Lazily builds the single shared flyout frame plus its pool of icon
@@ -172,6 +212,19 @@ EnsureFlyoutFrame = function()
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         ico.icon = icon
 
+        -- Native cooldown swipe over the flyout icon, so the player can
+        -- see which alternative totems are on cooldown while choosing.
+        -- Same "Model" (NOT "Cooldown") frame-type caveat as the element
+        -- buttons: vanilla 1.12 has no dedicated Cooldown widget type -
+        -- CooldownFrameTemplate is a Model template here (see the element
+        -- button's cd note above). Driven once at flyout-open by
+        -- ShowFlyout (the widget animates itself from start+duration), so
+        -- no per-frame refresh for this transient popup.
+        local cd = CreateFrame("Model", "TotemBarFlyoutIcon" .. i .. "Cooldown", ico, "CooldownFrameTemplate")
+        cd:SetAllPoints(ico.icon)
+        cd:SetFrameLevel(ico:GetFrameLevel())
+        ico.cd = cd
+
         ico:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
         ico:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
@@ -197,6 +250,12 @@ EnsureFlyoutFrame = function()
             else
                 CastSpellByName(this.totemName)
                 TotemBar.recordCast(flyoutElement, this.totemName)
+                -- Immediate cooldown feedback: don't wait for
+                -- SPELL_UPDATE_COOLDOWN. Refreshes the bar button's swipe
+                -- (in case the cast totem is also this element's chosen
+                -- default) and the flyout icon's own swipe.
+                RefreshCooldown(flyoutElement)
+                RefreshFlyoutCooldowns()
             end
         end)
 
@@ -245,6 +304,15 @@ ShowFlyout = function(button, element)
             local idx = FindSpellIndexByName(totemName)
             local texture = idx and GetSpellTexture(idx, BOOKTYPE_SPELL)
             ico.icon:SetTexture(texture or EMPTY_ICON)
+            -- Drive the swipe once here at flyout-open so the player can
+            -- see which alternative totems are on cooldown; the widget
+            -- animates itself from start+duration, no per-tick refresh.
+            if idx then
+                local start, duration, enable = GetSpellCooldown(idx, BOOKTYPE_SPELL)
+                CooldownFrame_SetTimer(ico.cd, start, duration, enable)
+            else
+                CooldownFrame_SetTimer(ico.cd, 0, 0, 0)
+            end
             ico:Show()
         end
     end
@@ -252,6 +320,9 @@ ShowFlyout = function(button, element)
     for j = count + 1, MAX_FLYOUT_ICONS do
         flyoutIcons[j]:Hide()
         flyoutIcons[j].totemName = nil
+        -- Clear the swipe on unused pool icons so a stale cooldown from a
+        -- previous open doesn't linger if this slot is reused later.
+        CooldownFrame_SetTimer(flyoutIcons[j].cd, 0, 0, 0)
     end
 
     if count == 0 then
@@ -270,6 +341,31 @@ ShowFlyout = function(button, element)
     f:ClearAllPoints()
     f:SetPoint("BOTTOM", button, "TOP", 0, FLYOUT_GAP)
     f:Show()
+end
+
+-- Re-drives the cooldown swipe on every CURRENTLY-SHOWN pooled flyout
+-- icon, re-resolving each one's spellbook index fresh (so a just-cast
+-- totem's swipe reflects the cooldown that cast just started). No-op if
+-- the flyout isn't open. Doesn't touch icon texture/totemName/layout -
+-- only the swipe - so it's safe to call from anywhere without disturbing
+-- ShowFlyout's own population pass (which sets the initial swipe state
+-- itself, including clearing unused pool icons; left as-is here).
+RefreshFlyoutCooldowns = function()
+    if not (flyoutFrame and flyoutFrame:IsShown()) then
+        return
+    end
+    for i = 1, MAX_FLYOUT_ICONS do
+        local ico = flyoutIcons[i]
+        if ico:IsShown() and ico.totemName then
+            local idx = FindSpellIndexByName(ico.totemName)
+            if idx then
+                local start, duration, enable = GetSpellCooldown(idx, BOOKTYPE_SPELL)
+                CooldownFrame_SetTimer(ico.cd, start, duration, enable)
+            else
+                CooldownFrame_SetTimer(ico.cd, 0, 0, 0)
+            end
+        end
+    end
 end
 
 HideFlyout = function()
@@ -330,11 +426,43 @@ CreateElementButton = function(element, index)
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn.icon = icon
 
-    -- OmniCC-style remaining-duration text, centered on the icon.
-    -- Hidden by default; UpdateTimerDisplays() shows/updates it.
+    -- Native action-button-style radial cooldown swipe (the same
+    -- CooldownFrameTemplate widget the default action bars use),
+    -- covering the icon area. This is IN ADDITION to the OmniCC-style
+    -- duration timer text below; RefreshCooldown() drives it from
+    -- events, see there for why it's not driven off the per-tick timer.
+    --
+    -- Frame type is "Model", NOT "Cooldown": vanilla 1.12 has no
+    -- dedicated Cooldown widget type (that was added in TBC/2.0) -
+    -- CooldownFrameTemplate is a Model-type template in 1.12 FrameXML
+    -- that renders Interface\Cooldown\UI-Cooldown-Indicator.mdx (same
+    -- approach pfUI's own libtotem/action bars use). CreateFrame with
+    -- type "Cooldown" would error on this client.
+    local cd = CreateFrame("Model", name .. "Cooldown", btn, "CooldownFrameTemplate")
+    cd:SetAllPoints(icon)
+    -- Match the button's own frame level instead of the default child
+    -- bump (parent level + 1): WoW's cross-frame draw order is primarily
+    -- (strata, level) - at the default +1 level the ENTIRE swipe frame
+    -- would draw above ALL of btn's own regions regardless of draw
+    -- layer, including the OVERLAY timer text below. At the SAME level,
+    -- ordering falls back to per-region draw layer, letting the OVERLAY
+    -- timer text render on top of the swipe as intended. Still flagged
+    -- for an in-game visual check (see file header note).
+    cd:SetFrameLevel(btn:GetFrameLevel())
+    btn.cd = cd
+
+    -- OmniCC-style remaining-duration text, anchored BELOW the button
+    -- (centered under the icon) so it doesn't overlap the native
+    -- cooldown swipe (btn.cd) rendered on top of the icon. Parented to
+    -- btn (a Button, like the element buttons themselves), not to the
+    -- bar's backdrop Frame - plain 1.12 Frames don't clip child regions
+    -- (no SetClipsChildren in this client), so text hanging below the
+    -- bar's backdrop still renders fully; flagged for an in-game visual
+    -- check regardless (see file header note). Hidden by default;
+    -- UpdateTimerDisplays() shows/updates it.
     local timerText = btn:CreateFontString(name .. "Timer", "OVERLAY")
     timerText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
-    timerText:SetPoint("CENTER", icon, "CENTER", 0, 1)
+    timerText:SetPoint("TOP", btn, "BOTTOM", 0, -1)
     timerText:SetJustifyH("CENTER")
     timerText:SetText("")
     timerText:Hide()
@@ -398,8 +526,44 @@ CreateElementButton = function(element, index)
     return btn
 end
 
--- Totemic Recall: instant-cast button, no dropdown, no per-element
--- timer (recall has no duration of its own - it just clears totems).
+-- Refreshes the Recall button's small "A" auto-recall indicator to
+-- match TotemBarDB.autoRecall: shown (greenish) when on, hidden when
+-- off. Called once at button creation and again after every right-click
+-- toggle (see CreateRecallButton below).
+RefreshRecallIndicator = function()
+    if not recallButton or not recallButton.autoIndicator then
+        return
+    end
+    if TotemBarDB and TotemBarDB.autoRecall then
+        recallButton.autoIndicator:SetTextColor(0.3, 1, 0.3)
+        recallButton.autoIndicator:Show()
+    else
+        recallButton.autoIndicator:Hide()
+    end
+end
+
+-- Pulses the Recall button's icon alpha while anyOutOfRange is true (set
+-- by UpdateTimerDisplays) - a "go recall + redeploy" visual prompt.
+-- Time-based (GetTime()), so the pulse stays smooth regardless of frame
+-- rate; no table/string allocation, just float math + SetAlpha. Once
+-- anyOutOfRange goes false, resets to full alpha exactly once (cached
+-- via iconPulsing) instead of calling SetAlpha every single frame.
+OnRecallUpdate = function()
+    if anyOutOfRange then
+        this.icon:SetAlpha(0.35 + 0.65 * math.abs(math.sin(GetTime() * 3)))
+        this.iconPulsing = true
+    elseif this.iconPulsing then
+        this.icon:SetAlpha(1)
+        this.iconPulsing = false
+    end
+end
+
+-- Totemic Recall: left-click casts it immediately (no dropdown, no
+-- per-element timer - recall has no duration of its own, it just clears
+-- totems). Right-click instead toggles TotemBarDB.autoRecall, the flag
+-- that decides whether TotemBar.recallAndCastAll() (the Totems macro's
+-- entry point, core/cast.lua) prepends a recall before redeploying. A
+-- small "A" FontString overlay reflects the current flag state.
 CreateRecallButton = function(index)
     local name = "TotemBarButtonRecall"
     local btn = CreateFrame("Button", name, TotemBarFrame)
@@ -423,30 +587,67 @@ CreateRecallButton = function(index)
     icon:SetTexture(GetRecallIcon())
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn.icon = icon
+    btn.iconPulsing = false   -- cached: whether the icon's alpha is currently != 1 (avoids redundant SetAlpha calls once the pulse stops)
+
+    -- Auto-recall indicator: small "A" in the icon's top-left corner.
+    -- RefreshRecallIndicator() (called below, and after every toggle)
+    -- shows/hides and colors it based on TotemBarDB.autoRecall.
+    local autoIndicator = btn:CreateFontString(name .. "Auto", "OVERLAY")
+    autoIndicator:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    autoIndicator:SetPoint("TOPLEFT", icon, "TOPLEFT", 1, -1)
+    autoIndicator:SetJustifyH("LEFT")
+    autoIndicator:SetText("A")
+    autoIndicator:Hide()
+    btn.autoIndicator = autoIndicator
 
     -- No normal texture (UI-Quickslot2 bevel bleeds through transparent
     -- icon art). Pushed/highlight only show on click/hover, no bleed.
     btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
     btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
 
-    btn:RegisterForClicks("LeftButtonUp")
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+
+    -- "Go recall + redeploy" visual prompt: pulses the icon's alpha
+    -- while anyOutOfRange is true (set by UpdateTimerDisplays). Only
+    -- touches btn.icon's alpha, never btn.autoIndicator, so the "A"
+    -- auto-recall flag text stays steady/visible throughout.
+    btn:SetScript("OnUpdate", OnRecallUpdate)
 
     btn:SetScript("OnClick", function()
-        CastSpellByName(RECALL_SPELL_NAME)
-        -- Totemic Recall drops every active totem at once; clear our
-        -- own-tracking timers so the icons' countdowns disappear too
-        -- (GetTotemInfo, if present, will also reflect this).
-        TotemBar.clearActiveTotems()
+        if arg1 == "RightButton" then
+            TotemBarDB.autoRecall = not TotemBarDB.autoRecall
+            if TotemBarDB.autoRecall then
+                ChatOut:AddMessage("TotemBar: auto-recall before setting ON")
+            else
+                ChatOut:AddMessage("TotemBar: auto-recall before setting OFF")
+            end
+            RefreshRecallIndicator()
+        else
+            CastSpellByName(RECALL_SPELL_NAME)
+            -- Totemic Recall drops every active totem at once; clear our
+            -- own-tracking timers so the icons' countdowns disappear too
+            -- (GetTotemInfo, if present, will also reflect this).
+            TotemBar.clearActiveTotems()
+        end
     end)
 
     btn:SetScript("OnEnter", function()
         GameTooltip:SetOwner(this, "ANCHOR_TOP")
         GameTooltip:SetText(RECALL_SPELL_NAME)
+        GameTooltip:AddLine("Left-click: recall now", 1, 1, 1)
+        local state = "OFF"
+        if TotemBarDB and TotemBarDB.autoRecall then
+            state = "ON"
+        end
+        GameTooltip:AddLine("Auto Recall Toggle (right-click): " .. state, 1, 1, 1)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
+
+    recallButton = btn
+    RefreshRecallIndicator()
 
     return btn
 end
@@ -462,6 +663,7 @@ UpdateTimerDisplays = function()
     local hasGTI = (type(GetTotemInfo) == "function")
     local elements = TotemBar.TOTEM_ELEMENTS
     local activeTotems = TotemBar.activeTotems
+    local outOfRangeFound = false     -- OR-accumulator across this pass; written to anyOutOfRange at the end
 
     for i = 1, table.getn(elements) do
         local element = elements[i]
@@ -519,37 +721,65 @@ UpdateTimerDisplays = function()
                 btn.timerLastLow = nil
             end
 
-            -- Out-of-range red tint (SuperWoW-gated): only meaningful
-            -- while this element has an ACTIVE own-tracked cast record
-            -- with a stored cast position (ownRecord.px/py, set by
-            -- recordCast() in core/cast.lua when SuperWoW's UnitPosition
-            -- was available at cast time) AND UnitPosition is available
-            -- right now to get the player's current position. Any
-            -- missing piece - no active own record, no stored position
-            -- (no SuperWoW at cast time), no UnitPosition now - means
-            -- "can't tell", which is treated as in-range (no tint), not
-            -- as out-of-range.
-            local outOfRange = false
-            if ownRecord and ownRecord.px and ownRecord.py and UnitPosition then
-                local x, y = UnitPosition("player")
-                if x and y then
-                    local dx = x - ownRecord.px
-                    local dy = y - ownRecord.py
-                    local dist = math.sqrt(dx * dx + dy * dy)
-                    local range = TotemBar.totemRange(ownRecord.totemName)
-                    outOfRange = dist > range
+            -- Out-of-range tint: buff-presence based. A totem's party
+            -- buff uses the SAME icon texture as the totem spell itself
+            -- (verified in-game), so "am I in range?" == "do I have a
+            -- buff whose texture matches this totem's icon?".
+            --
+            -- ACTIVE requires an own-tracking record (ownRecord, already
+            -- nil'd above once its stored duration expires) AND, when
+            -- pfUI's libtotem is present, GetTotemInfo(i) agreeing the
+            -- slot is still active. That second check is what keeps a
+            -- totem someone/something DESTROYED (burned, killed) before
+            -- its timer ran out from flashing red - once GTI says the
+            -- slot is gone, we just go back to normal, not red.
+            local rangeActive = (ownRecord ~= nil)
+            if rangeActive and hasGTI and not gtiActive then
+                rangeActive = false
+            end
+
+            if not rangeActive then
+                if btn.tintRed then
+                    btn.icon:SetVertexColor(1, 1, 1)
+                    btn.tintRed = false
+                end
+            else
+                local hasBuff = TotemBar.hasBuffWithIcon(ownRecord.icon)
+                if hasBuff then
+                    -- In range: remember it (self-learning - marks this
+                    -- as a buff totem so a later drop-off can be told
+                    -- apart from a totem that simply never grants one).
+                    ownRecord.everHadBuff = true
+                    if btn.tintRed then
+                        btn.icon:SetVertexColor(1, 1, 1)
+                        btn.tintRed = false
+                    end
+                elseif ownRecord.everHadBuff then
+                    -- Had the buff earlier from this cast, don't have it
+                    -- now: wandered out of the totem's range.
+                    if not btn.tintRed then
+                        btn.icon:SetVertexColor(1, 0.35, 0.35)
+                        btn.tintRed = true
+                    end
+                else
+                    -- Either a non-buff totem (Searing/Magma/Grounding/
+                    -- etc. never grant a matching buff, so everHadBuff
+                    -- stays false forever -> never red) or we simply
+                    -- haven't been in range yet since this cast.
+                    if btn.tintRed then
+                        btn.icon:SetVertexColor(1, 1, 1)
+                        btn.tintRed = false
+                    end
                 end
             end
-            if outOfRange ~= btn.tintRed then
-                if outOfRange then
-                    btn.icon:SetVertexColor(1, 0.35, 0.35)
-                else
-                    btn.icon:SetVertexColor(1, 1, 1)
-                end
-                btn.tintRed = outOfRange
+
+            if btn.tintRed then
+                outOfRangeFound = true
             end
         end
     end
+
+    anyOutOfRange = outOfRangeFound
 end
 
 OnBarUpdate = function()
@@ -610,7 +840,9 @@ function TotemBar.BuildUI()
     frame:SetPoint(TotemBarDB.point, UIParent, TotemBarDB.relPoint, TotemBarDB.x, TotemBarDB.y)
 
     for i = 1, numElements do
-        CreateElementButton(TotemBar.TOTEM_ELEMENTS[i], i)
+        local element = TotemBar.TOTEM_ELEMENTS[i]
+        CreateElementButton(element, i)
+        RefreshCooldown(element)   -- initial swipe state for whatever's already chosen
     end
     CreateRecallButton(totalButtons)
 
@@ -665,13 +897,25 @@ local function HandleSlashCommand(msg)
     end
 end
 
+-- SPELL_UPDATE_COOLDOWN fires whenever any spell's cooldown starts or
+-- ends (the standard signal the default action bars key off of) - this
+-- is the event-driven trigger for RefreshCooldown, kept separate from
+-- the throttled per-tick timer OnUpdate (see RefreshCooldown's comment
+-- for why: SetTimer-on-every-tick would restart the swipe animation).
 local eventFrame = CreateFrame("Frame", "TotemBarEventFrame", UIParent)
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:SetScript("OnEvent", function()
     if event == "ADDON_LOADED" and arg1 == "TotemBar" then
         TotemBar.ensureDefaults()
         TotemBar.BuildUI()
         eventFrame:UnregisterEvent("ADDON_LOADED")
+    elseif event == "SPELL_UPDATE_COOLDOWN" then
+        local elements = TotemBar.TOTEM_ELEMENTS
+        for i = 1, table.getn(elements) do
+            RefreshCooldown(elements[i])
+        end
+        RefreshFlyoutCooldowns()
     end
 end)
 

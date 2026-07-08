@@ -101,19 +101,40 @@ function TotemBar.formatRemaining(remaining)
     return string.format("%d", math.ceil(remaining))
 end
 
+-- Finds the spellbook index of a known spell by exact name, or nil.
+-- Thin WoW-API wrapper; mirrors ui.lua's own file-local
+-- FindSpellIndexByName (kept separate rather than shared, since there's
+-- no common "api" module to hang a single copy off yet).
+local function findSpellIndexByName(name)
+    if not name then
+        return nil
+    end
+    local i = 1
+    while true do
+        local spellName = GetSpellName(i, BOOKTYPE_SPELL)
+        if not spellName then
+            return nil
+        end
+        if spellName == name then
+            return i
+        end
+        i = i + 1
+    end
+end
+
 -- Records that `totemName` was just cast into `element`'s slot, into
 -- TotemBar's own tracking table (see activeTotems above). Touches
--- GetTime() and (for Searing Totem) a spellbook rank scan, so it isn't
--- pure; called from both the bar's left-click path (ui.lua) and
--- castNext() below.
+-- GetTime(), a spellbook index/texture scan and (for Searing Totem) a
+-- rank scan, so it isn't pure; called from both the bar's left-click
+-- path (ui.lua) and castNext()/castAll() below.
 --
--- Also stashes the totem's name and the player's world position at cast
--- time (px/py), when SuperWoW's UnitPosition is available, so ui.lua can
--- later compute how far the player has wandered from the totem for the
--- out-of-range red-tint feature. UnitPosition is a SuperWoW-only global;
--- guarded on existing AND returning non-nil coords, so on a client
--- without SuperWoW this simply never sets px/py and the range check
--- downstream stays inactive.
+-- Also stashes the totem spell's icon texture (rec.icon) and a
+-- self-learning "did I ever see this totem's buff" flag
+-- (rec.everHadBuff, starts false). ui.lua's out-of-range red-tint
+-- feature is buff-presence based: a totem's party buff uses the SAME
+-- icon texture as the totem spell itself (verified in-game), so
+-- TotemBar.hasBuffWithIcon(rec.icon) tells whether the player is
+-- currently benefiting from THIS cast totem.
 function TotemBar.recordCast(element, totemName)
     if not element or not totemName then
         return
@@ -122,19 +143,75 @@ function TotemBar.recordCast(element, totemName)
     if totemName == "Searing Totem" and TotemBar.highestKnownRank then
         highestRank = TotemBar.highestKnownRank(totemName)
     end
+    local icon = nil
+    local idx = findSpellIndexByName(totemName)
+    if idx then
+        icon = GetSpellTexture(idx, BOOKTYPE_SPELL)
+    end
     local rec = {
         start = GetTime(),
         duration = TotemBar.totemDuration(totemName, highestRank),
         totemName = totemName,
+        icon = icon,
+        everHadBuff = false,
     }
-    if UnitPosition then
-        local x, y = UnitPosition("player")
-        if x and y then
-            rec.px = x
-            rec.py = y
+    TotemBar.activeTotems[element] = rec
+end
+
+-- Module-scratch table for the buff-texture scan below, reused every
+-- call (hasBuffWithIcon runs ~5x/sec, from ui.lua's throttled timer
+-- tick) so it doesn't allocate a new table each time. buffScratchLen
+-- tracks how far the previous scan filled it, so leftover entries past
+-- the new scan's length get nilled out - keeping it a clean, hole-free
+-- 1..n array (table.getn needs that to be reliable in Lua 5.0).
+local buffScratch = {}
+local buffScratchLen = 0
+
+-- Pure: given a flat array of buff texture path strings (some entries
+-- may be nil) and a totem spell's icon texture path, returns true if
+-- any buff texture matches iconPath via a case-insensitive literal
+-- substring search (tolerates path/casing differences between
+-- GetSpellTexture's and UnitBuff's returned strings). Returns false if
+-- iconPath or buffTexList is nil, or nothing matches.
+function TotemBar.buffTexturesMatch(buffTexList, iconPath)
+    if not iconPath or not buffTexList then
+        return false
+    end
+    local needle = string.lower(iconPath)
+    for i = 1, table.getn(buffTexList) do
+        local tex = buffTexList[i]
+        if tex and string.find(string.lower(tex), needle, 1, true) then
+            return true
         end
     end
-    TotemBar.activeTotems[element] = rec
+    return false
+end
+
+-- Thin WoW-API wrapper: scans the player's current buffs (UnitBuff
+-- "player" 1..32, stopping at the first nil slot) into the reusable
+-- buffScratch table, then hands it to the pure
+-- TotemBar.buffTexturesMatch() above. This is the "am I in this totem's
+-- range?" signal for ui.lua's red-tint feature: a totem's party buff
+-- shares its spell's icon texture (verified in-game), so having a
+-- matching buff means the totem is currently affecting the player.
+function TotemBar.hasBuffWithIcon(iconPath)
+    if not iconPath then
+        return false
+    end
+    local n = 0
+    for i = 1, 32 do
+        local tex = UnitBuff("player", i)
+        if not tex then
+            break
+        end
+        n = n + 1
+        buffScratch[n] = tex
+    end
+    for i = n + 1, buffScratchLen do
+        buffScratch[i] = nil
+    end
+    buffScratchLen = n
+    return TotemBar.buffTexturesMatch(buffScratch, iconPath)
 end
 
 -- Clears every own-tracked totem timer at once (e.g. after Totemic
@@ -201,15 +278,19 @@ function TotemBar.castAll()
     end
 end
 
--- Recall-then-deploy: cast Totemic Recall FIRST (drops existing totems and
--- refunds some mana), clear own-tracking, then place all filled slots via
--- castAll(). One keypress = recall + redeploy. Like castAll, relies on
--- TurtleWoW allowing several CastSpellByName calls in one Lua frame (here
--- the non-totem Recall plus the 4 totems) -- verify in-game.
+-- Recall-then-deploy: when TotemBarDB.autoRecall is on (the default -
+-- toggleable via the Recall button's right-click, see ui.lua), casts
+-- Totemic Recall FIRST (drops existing totems and refunds some mana)
+-- and clears own-tracking, then always places all filled slots via
+-- castAll(). One keypress = recall + redeploy (or just redeploy, with
+-- the flag off). Like castAll, relies on TurtleWoW allowing several
+-- CastSpellByName calls in one Lua frame -- verify in-game.
 --
 -- Intended for a macro: `/script TotemBar.recallAndCastAll()`
 function TotemBar.recallAndCastAll()
-    CastSpellByName("Totemic Recall")
-    TotemBar.clearActiveTotems()
+    if TotemBarDB and TotemBarDB.autoRecall then
+        CastSpellByName("Totemic Recall")
+        TotemBar.clearActiveTotems()
+    end
     TotemBar.castAll()
 end
