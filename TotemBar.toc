@@ -1,0 +1,12 @@
+## Interface: 11200
+## Title: TotemBar
+## Notes: Shaman totem bar - pick one totem per element, cast it, or spam-cycle all four from a macro.
+## Author: Phil
+## Version: 0.1.0
+## SavedVariables: TotemBarDB
+
+core\totemdata.lua
+core\known.lua
+core\cast.lua
+core\config.lua
+ui.lua
