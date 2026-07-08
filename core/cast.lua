@@ -161,3 +161,25 @@ function TotemBar.castNext()
     state.lastTime = now
     return totemName, element
 end
+
+-- Casts ALL filled slots in a single call (Fire -> Earth -> Water ->
+-- Air). On TurtleWoW each totem element has its own cooldown, so this
+-- MAY drop all four from one keypress. Whether 4 CastSpellByName calls
+-- in one Lua frame all land (vs only the last "winning") is unverified
+-- on this client -- offered as a one-press alternative to castNext() to
+-- test in-game.
+--
+-- Intended for a macro: `/script TotemBar.castAll()`
+function TotemBar.castAll()
+    local db = TotemBarDB
+    local chosen = (db and db.chosen) or {}
+    local elements = TotemBar.TOTEM_ELEMENTS
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local totemName = chosen[element]
+        if totemName then
+            CastSpellByName(totemName)
+            TotemBar.recordCast(element, totemName)
+        end
+    end
+end
