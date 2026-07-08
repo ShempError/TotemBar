@@ -342,6 +342,7 @@ CreateElementButton = function(element, index)
     btn.timerVisible = false       -- cached shown-state, avoid redundant Show/Hide
     btn.timerLastText = nil        -- cached last string, avoid redundant SetText
     btn.timerLastLow = nil         -- cached last <=5s tint state, avoid redundant SetTextColor
+    btn.tintRed = false            -- cached out-of-range tint state, avoid redundant SetVertexColor
 
     -- No normal texture: UI-Quickslot2's bevel bleeds through
     -- transparent icon art (see backdrop above). Pushed/highlight only
@@ -475,6 +476,7 @@ UpdateTimerDisplays = function()
                 if not ownRemaining or ownRemaining <= 0 then
                     activeTotems[element] = nil
                     ownRemaining = nil
+                    ownRecord = nil     -- expired: not "active" for the range-tint check below either
                 end
             end
 
@@ -515,6 +517,36 @@ UpdateTimerDisplays = function()
                 btn.timerVisible = false
                 btn.timerLastText = nil
                 btn.timerLastLow = nil
+            end
+
+            -- Out-of-range red tint (SuperWoW-gated): only meaningful
+            -- while this element has an ACTIVE own-tracked cast record
+            -- with a stored cast position (ownRecord.px/py, set by
+            -- recordCast() in core/cast.lua when SuperWoW's UnitPosition
+            -- was available at cast time) AND UnitPosition is available
+            -- right now to get the player's current position. Any
+            -- missing piece - no active own record, no stored position
+            -- (no SuperWoW at cast time), no UnitPosition now - means
+            -- "can't tell", which is treated as in-range (no tint), not
+            -- as out-of-range.
+            local outOfRange = false
+            if ownRecord and ownRecord.px and ownRecord.py and UnitPosition then
+                local x, y = UnitPosition("player")
+                if x and y then
+                    local dx = x - ownRecord.px
+                    local dy = y - ownRecord.py
+                    local dist = math.sqrt(dx * dx + dy * dy)
+                    local range = TotemBar.totemRange(ownRecord.totemName)
+                    outOfRange = dist > range
+                end
+            end
+            if outOfRange ~= btn.tintRed then
+                if outOfRange then
+                    btn.icon:SetVertexColor(1, 0.35, 0.35)
+                else
+                    btn.icon:SetVertexColor(1, 1, 1)
+                end
+                btn.tintRed = outOfRange
             end
         end
     end

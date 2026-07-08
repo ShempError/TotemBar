@@ -106,6 +106,14 @@ end
 -- GetTime() and (for Searing Totem) a spellbook rank scan, so it isn't
 -- pure; called from both the bar's left-click path (ui.lua) and
 -- castNext() below.
+--
+-- Also stashes the totem's name and the player's world position at cast
+-- time (px/py), when SuperWoW's UnitPosition is available, so ui.lua can
+-- later compute how far the player has wandered from the totem for the
+-- out-of-range red-tint feature. UnitPosition is a SuperWoW-only global;
+-- guarded on existing AND returning non-nil coords, so on a client
+-- without SuperWoW this simply never sets px/py and the range check
+-- downstream stays inactive.
 function TotemBar.recordCast(element, totemName)
     if not element or not totemName then
         return
@@ -114,10 +122,19 @@ function TotemBar.recordCast(element, totemName)
     if totemName == "Searing Totem" and TotemBar.highestKnownRank then
         highestRank = TotemBar.highestKnownRank(totemName)
     end
-    TotemBar.activeTotems[element] = {
+    local rec = {
         start = GetTime(),
         duration = TotemBar.totemDuration(totemName, highestRank),
+        totemName = totemName,
     }
+    if UnitPosition then
+        local x, y = UnitPosition("player")
+        if x and y then
+            rec.px = x
+            rec.py = y
+        end
+    end
+    TotemBar.activeTotems[element] = rec
 end
 
 -- Clears every own-tracked totem timer at once (e.g. after Totemic
@@ -182,4 +199,17 @@ function TotemBar.castAll()
             TotemBar.recordCast(element, totemName)
         end
     end
+end
+
+-- Recall-then-deploy: cast Totemic Recall FIRST (drops existing totems and
+-- refunds some mana), clear own-tracking, then place all filled slots via
+-- castAll(). One keypress = recall + redeploy. Like castAll, relies on
+-- TurtleWoW allowing several CastSpellByName calls in one Lua frame (here
+-- the non-totem Recall plus the 4 totems) -- verify in-game.
+--
+-- Intended for a macro: `/script TotemBar.recallAndCastAll()`
+function TotemBar.recallAndCastAll()
+    CastSpellByName("Totemic Recall")
+    TotemBar.clearActiveTotems()
+    TotemBar.castAll()
 end
