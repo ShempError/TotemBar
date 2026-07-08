@@ -34,10 +34,30 @@ local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local RECALL_SPELL_NAME = "Totemic Recall"
 local RECALL_ICON_FALLBACK = "Interface\\Icons\\Spell_Nature_AstralRecal"
 
-local elementButtons = {}      -- element -> button frame
-local dropdownRows = {}        -- pooled dropdown row buttons (created once)
-local dropdownFrame = nil      -- lazily created custom dropdown frame
-local dropdownElement = nil    -- element currently shown in the dropdown
+local DROPDOWN_HIDE_INTERVAL = 0.1  -- throttle for the mouse-leave hide check
+
+local elementButtons = {}         -- element -> button frame
+local dropdownRows = {}           -- pooled dropdown row buttons (created once)
+local dropdownFrame = nil         -- lazily created custom dropdown frame
+local dropdownElement = nil       -- element currently shown in the dropdown
+local dropdownOwnerButton = nil   -- button that opened the dropdown
+local dropdownElapsed = 0         -- throttle accumulator for the hide check
+
+-- Hover flyout: hovering an element button pops a column of icon
+-- buttons UPWARD for the OTHER known totems of that element (all known
+-- for the element minus the currently-chosen default). Clicking one
+-- casts it ONCE without changing the slot's default. Shares one frame +
+-- a pool of icon buttons, mirroring the dropdown pattern above.
+local MAX_FLYOUT_ICONS = 6         -- most totems any single element has
+local FLYOUT_PAD = 4               -- inner padding inside the flyout frame
+local FLYOUT_GAP = 2               -- gap between element button top and flyout bottom
+local FLYOUT_HIDE_INTERVAL = 0.1   -- throttle for the mouse-leave hide check
+
+local flyoutIcons = {}         -- pooled flyout icon buttons (created once)
+local flyoutFrame = nil        -- lazily created shared flyout frame
+local flyoutElement = nil      -- element currently shown in the flyout
+local flyoutOwnerButton = nil  -- element button the flyout is anchored to
+local flyoutElapsed = 0        -- throttle accumulator for the hide check
 
 -- Forward declarations so functions defined later can be referenced by
 -- closures created earlier in the file (standard Lua forward-decl idiom:
@@ -45,6 +65,12 @@ local dropdownElement = nil    -- element currently shown in the dropdown
 local RefreshButton
 local EnsureDropdownFrame
 local ShowDropdown
+local HideDropdown
+local OnDropdownUpdate
+local EnsureFlyoutFrame
+local ShowFlyout
+local HideFlyout
+local OnFlyoutUpdate
 local CreateElementButton
 local CreateRecallButton
 local UpdateTimerDisplays
@@ -124,6 +150,7 @@ EnsureDropdownFrame = function()
         insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
     f:SetBackdropColor(0, 0, 0, 1)
+    f:EnableMouse(true)         -- so padding between rows still counts as "over the dropdown"
     f:SetClampedToScreen(true)
     f:Hide()
 
@@ -152,12 +179,16 @@ EnsureDropdownFrame = function()
                 end
                 RefreshButton(dropdownElement)
             end
-            dropdownFrame:Hide()
+            HideDropdown()
         end)
 
         row:Hide()
         dropdownRows[i] = row
     end
+
+    -- OnUpdate only fires while the frame is shown, so this hide-check
+    -- naturally stops running once the dropdown is hidden.
+    f:SetScript("OnUpdate", OnDropdownUpdate)
 
     dropdownFrame = f
     return f
@@ -166,6 +197,8 @@ end
 ShowDropdown = function(button, element)
     local f = EnsureDropdownFrame()
     dropdownElement = element
+    dropdownOwnerButton = button
+    dropdownElapsed = 0
 
     local db = TotemBarDB
     local spellNames = TotemBar.scanSpellbook()
@@ -207,6 +240,186 @@ ShowDropdown = function(button, element)
     f:ClearAllPoints()
     f:SetPoint("TOP", button, "BOTTOM", 0, -2)
     f:Show()
+end
+
+HideDropdown = function()
+    if dropdownFrame then
+        dropdownFrame:Hide()
+    end
+    dropdownOwnerButton = nil
+end
+
+-- Throttled mouse-leave check for the right-click dropdown: hide it once
+-- the cursor is over NEITHER the dropdown NOR the button that opened it
+-- (mirrors OnFlyoutUpdate). Row clicks still hide it directly. No
+-- per-frame allocation - just the accumulator and two MouseIsOver checks.
+OnDropdownUpdate = function()
+    dropdownElapsed = dropdownElapsed + arg1
+    if dropdownElapsed < DROPDOWN_HIDE_INTERVAL then
+        return
+    end
+    dropdownElapsed = 0
+    if MouseIsOver(dropdownFrame) or (dropdownOwnerButton and MouseIsOver(dropdownOwnerButton)) then
+        return
+    end
+    HideDropdown()
+end
+
+-- Lazily builds the single shared flyout frame plus its pool of icon
+-- buttons (TotemBarFlyoutIcon1..MAX_FLYOUT_ICONS), stacked bottom-up so
+-- ShowFlyout can just Show the first N. DIALOG strata so it draws above
+-- the bar backdrop. Same anti-bevel icon treatment as the element
+-- buttons (opaque black backdrop under an inset, cropped ARTWORK icon).
+EnsureFlyoutFrame = function()
+    if flyoutFrame then
+        return flyoutFrame
+    end
+
+    local f = CreateFrame("Frame", "TotemBarFlyout", UIParent)
+    f:SetFrameStrata("DIALOG")
+    f:SetWidth(BUTTON_SIZE + FLYOUT_PAD * 2)
+    f:SetHeight(BUTTON_SIZE + FLYOUT_PAD * 2)
+    f:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.85)
+    f:EnableMouse(true)         -- so gaps/padding still count as "over the flyout"
+    f:SetClampedToScreen(true)
+    f:Hide()
+
+    for i = 1, MAX_FLYOUT_ICONS do
+        local ico = CreateFrame("Button", "TotemBarFlyoutIcon" .. i, f)
+        ico:SetWidth(BUTTON_SIZE)
+        ico:SetHeight(BUTTON_SIZE)
+        -- Bottom-up: icon 1 just inside the bottom padding, each next
+        -- one a full button+gap higher (so nearest the element button
+        -- is first).
+        ico:SetPoint("BOTTOM", f, "BOTTOM", 0, FLYOUT_PAD + (i - 1) * (BUTTON_SIZE + BUTTON_GAP))
+
+        ico:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        ico:SetBackdropColor(0, 0, 0, 1)
+
+        local icon = ico:CreateTexture("TotemBarFlyoutIcon" .. i .. "Icon", "ARTWORK")
+        icon:SetPoint("TOPLEFT", ico, "TOPLEFT", 3, -3)
+        icon:SetPoint("BOTTOMRIGHT", ico, "BOTTOMRIGHT", -3, 3)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        ico.icon = icon
+
+        ico:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        ico:RegisterForClicks("LeftButtonUp")
+
+        -- Cast once for the element the flyout is currently showing.
+        -- recordCast() drives THAT element's timer to the actually-cast
+        -- totem, without touching the slot's chosen default.
+        ico:SetScript("OnClick", function()
+            if this.totemName and flyoutElement then
+                CastSpellByName(this.totemName)
+                TotemBar.recordCast(flyoutElement, this.totemName)
+            end
+        end)
+
+        ico:SetScript("OnEnter", function()
+            if this.totemName then
+                GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+                GameTooltip:SetText(this.totemName)
+                GameTooltip:Show()
+            end
+        end)
+        ico:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+
+        ico:Hide()
+        flyoutIcons[i] = ico
+    end
+
+    -- OnUpdate only fires while the frame is shown, so this hide-check
+    -- naturally stops running once the flyout is hidden.
+    f:SetScript("OnUpdate", OnFlyoutUpdate)
+
+    flyoutFrame = f
+    return f
+end
+
+-- Populates and shows the flyout above `button` for `element`, listing
+-- every known totem of that element EXCEPT the currently-chosen default.
+-- Shows nothing if there are no "others".
+ShowFlyout = function(button, element)
+    local f = EnsureFlyoutFrame()
+
+    local db = TotemBarDB
+    local spellNames = TotemBar.scanSpellbook()
+    local known = TotemBar.knownTotems(spellNames, element)
+    local chosen = db and db.chosen and db.chosen[element]
+
+    local count = 0
+    for i = 1, table.getn(known) do
+        local totemName = known[i]
+        if totemName ~= chosen and count < MAX_FLYOUT_ICONS then
+            count = count + 1
+            local ico = flyoutIcons[count]
+            ico.totemName = totemName
+            local idx = FindSpellIndexByName(totemName)
+            local texture = idx and GetSpellTexture(idx, BOOKTYPE_SPELL)
+            ico.icon:SetTexture(texture or EMPTY_ICON)
+            ico:Show()
+        end
+    end
+
+    for j = count + 1, MAX_FLYOUT_ICONS do
+        flyoutIcons[j]:Hide()
+        flyoutIcons[j].totemName = nil
+    end
+
+    if count == 0 then
+        -- No other known totems for this element; don't show an empty box.
+        flyoutElement = nil
+        flyoutOwnerButton = nil
+        f:Hide()
+        return
+    end
+
+    flyoutElement = element
+    flyoutOwnerButton = button
+    flyoutElapsed = 0
+
+    f:SetHeight(count * (BUTTON_SIZE + BUTTON_GAP) - BUTTON_GAP + FLYOUT_PAD * 2)
+    f:ClearAllPoints()
+    f:SetPoint("BOTTOM", button, "TOP", 0, FLYOUT_GAP)
+    f:Show()
+end
+
+HideFlyout = function()
+    if flyoutFrame then
+        flyoutFrame:Hide()
+    end
+    flyoutElement = nil
+    flyoutOwnerButton = nil
+end
+
+-- Throttled mouse-leave check: hide the flyout once the cursor is over
+-- NEITHER the owning element button NOR the flyout itself. This keeps
+-- it open while the mouse travels from the button up onto the flyout.
+-- No per-frame allocation - just the accumulator and two MouseIsOver
+-- geometry checks, gated to run ~every FLYOUT_HIDE_INTERVAL seconds.
+OnFlyoutUpdate = function()
+    flyoutElapsed = flyoutElapsed + arg1
+    if flyoutElapsed < FLYOUT_HIDE_INTERVAL then
+        return
+    end
+    flyoutElapsed = 0
+    if flyoutOwnerButton and (MouseIsOver(flyoutFrame) or MouseIsOver(flyoutOwnerButton)) then
+        return
+    end
+    HideFlyout()
 end
 
 CreateElementButton = function(element, index)
@@ -290,6 +503,10 @@ CreateElementButton = function(element, index)
             GameTooltip:SetText(this.element .. " (empty - right-click to choose)")
         end
         GameTooltip:Show()
+        -- Pop the "cast one of the others" flyout above this button.
+        -- The flyout hides itself via its own throttled mouse-leave
+        -- check (OnFlyoutUpdate), so no OnLeave handling is needed here.
+        ShowFlyout(this, this.element)
     end)
     btn:SetScript("OnLeave", function()
         GameTooltip:Hide()
