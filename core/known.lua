@@ -59,3 +59,31 @@ function TotemBar.scanSpellbook()
     end
     return names
 end
+
+-- Thin WoW-API wrapper: scans the player's spellbook for every entry
+-- named `spellName` (multiple ranks of the same spell share a name)
+-- and returns the highest rank number found, or nil if the spell isn't
+-- known at all, or no matching entry carried a parseable rank number
+-- (e.g. GetSpellName's rank string didn't contain a digit).
+function TotemBar.highestKnownRank(spellName)
+    if not spellName then
+        return nil
+    end
+    local highest = nil
+    local i = 1
+    while true do
+        local name, rank = GetSpellName(i, BOOKTYPE_SPELL)
+        if not name then
+            break
+        end
+        if name == spellName then
+            local _, _, numStr = string.find(rank or "", "(%d+)")
+            local num = numStr and tonumber(numStr)
+            if num and (not highest or num > highest) then
+                highest = num
+            end
+        end
+        i = i + 1
+    end
+    return highest
+end

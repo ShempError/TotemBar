@@ -63,3 +63,70 @@ function TotemBar.elementOf(name)
     end
     return elementByName[name]
 end
+
+-- Totem lifetime durations (seconds), tuned to TurtleWoW server timers
+-- (mirrors pfUI libtotem's verified values). Keyed by totem spell name;
+-- any totem not listed here falls back to DEFAULT_TOTEM_DURATION.
+-- Searing Totem is rank-aware (see SEARING_TOTEM_DURATIONS below) and
+-- is intentionally NOT listed in this flat table.
+TotemBar.DEFAULT_TOTEM_DURATION = 120
+
+TotemBar.SEARING_TOTEM_DURATIONS = {
+    [1] = 30,
+    [2] = 35,
+    [3] = 40,
+    [4] = 45,
+    [5] = 50,
+    [6] = 55,
+}
+TotemBar.SEARING_TOTEM_MAX_RANK = 6
+TotemBar.SEARING_TOTEM_DEFAULT_DURATION = 55
+
+TotemBar.TOTEM_DURATIONS = {
+    -- Fire
+    ["Magma Totem"] = 20,
+    ["Fire Nova Totem"] = 5,
+    ["Flametongue Totem"] = 120,
+    ["Frost Resistance Totem"] = 120,
+    -- Earth
+    ["Stoneclaw Totem"] = 15,
+    ["Earthbind Totem"] = 45,
+    ["Stoneskin Totem"] = 120,
+    ["Strength of Earth Totem"] = 120,
+    ["Tremor Totem"] = 120,
+    -- Water
+    ["Mana Tide Totem"] = 12,
+    ["Healing Stream Totem"] = 60,
+    ["Mana Spring Totem"] = 60,
+    ["Fire Resistance Totem"] = 120,
+    ["Disease Cleansing Totem"] = 120,
+    ["Poison Cleansing Totem"] = 120,
+    -- Air
+    ["Grounding Totem"] = 45,
+    ["Grace of Air Totem"] = 120,
+    ["Nature Resistance Totem"] = 120,
+    ["Tranquil Air Totem"] = 120,
+    ["Windfury Totem"] = 120,
+    ["Windwall Totem"] = 120,
+}
+
+-- Pure: seconds a totem will remain active for, given its exact spell
+-- name and (for Searing Totem only) the player's highest known rank
+-- number. Unknown/unmapped totems fall back to DEFAULT_TOTEM_DURATION
+-- (a safe overestimate, rather than a timer that disappears too early).
+function TotemBar.totemDuration(name, highestRank)
+    if not name then
+        return TotemBar.DEFAULT_TOTEM_DURATION
+    end
+    if name == "Searing Totem" then
+        if not highestRank or highestRank < 1 then
+            return TotemBar.SEARING_TOTEM_DEFAULT_DURATION
+        end
+        local rank = highestRank
+        if rank > TotemBar.SEARING_TOTEM_MAX_RANK then
+            rank = TotemBar.SEARING_TOTEM_MAX_RANK
+        end
+        return TotemBar.SEARING_TOTEM_DURATIONS[rank] or TotemBar.SEARING_TOTEM_DEFAULT_DURATION
+    end
+    return TotemBar.TOTEM_DURATIONS[name] or TotemBar.DEFAULT_TOTEM_DURATION
+end

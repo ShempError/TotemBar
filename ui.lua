@@ -1,9 +1,14 @@
 -- TotemBar - ui.lua
--- The totem bar frame: 4 element buttons plus a small custom dropdown
--- list (not UIDropDownMenu, to stay dependency-free and avoid its
--- global-name plumbing) for picking which known totem fills each
--- element's slot. WoW-API-only file; not offline-tested, only
--- syntax-checked (see tools/luatests notes in the repo).
+-- The totem bar frame: 4 element buttons plus a Totemic Recall button,
+-- and a small custom dropdown list (not UIDropDownMenu, to stay
+-- dependency-free and avoid its global-name plumbing) for picking
+-- which known totem fills each element's slot. Each element button
+-- also carries an OmniCC-style remaining-duration timer text (hybrid
+-- source: pfUI libtotem's GetTotemInfo when present, else TotemBar's
+-- own cast-tracking - see core/cast.lua). No per-button text labels;
+-- hover the button for a tooltip naming the element/totem. WoW-API-only
+-- file; not offline-tested, only syntax-checked (see tools/luatests
+-- notes in the repo).
 
 TotemBar = TotemBar or {}
 
@@ -15,8 +20,19 @@ local BUTTON_SIZE = 36
 local BUTTON_GAP = 4
 local MAX_DROPDOWN_ROWS = 8
 
+-- Timer-text OnUpdate throttle: refresh at most this often (seconds),
+-- not every frame, to keep the shared/guild-addon perf budget sane.
+local TIMER_UPDATE_INTERVAL = 0.2
+local timerElapsed = 0
+
 -- Fallback icon for an empty / unresolved slot.
 local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
+
+-- Totemic Recall: exact icon is verified at button-creation time via a
+-- spellbook scan (GetSpellTexture); this is only the last-resort
+-- fallback if that scan fails to resolve a texture.
+local RECALL_SPELL_NAME = "Totemic Recall"
+local RECALL_ICON_FALLBACK = "Interface\\Icons\\Spell_Nature_AstralRecal"
 
 local elementButtons = {}      -- element -> button frame
 local dropdownRows = {}        -- pooled dropdown row buttons (created once)
@@ -30,6 +46,9 @@ local RefreshButton
 local EnsureDropdownFrame
 local ShowDropdown
 local CreateElementButton
+local CreateRecallButton
+local UpdateTimerDisplays
+local OnBarUpdate
 local OnDragStart
 local OnDragStop
 
@@ -65,6 +84,20 @@ local function GetElementIcon(element)
     end
     local texture = GetSpellTexture(idx, BOOKTYPE_SPELL)
     return texture or EMPTY_ICON
+end
+
+-- Resolves the Totemic Recall icon by scanning the spellbook for the
+-- real spell (so it matches whatever texture TWoW actually ships),
+-- falling back to a hardcoded texture if the scan can't find it.
+local function GetRecallIcon()
+    local idx = FindSpellIndexByName(RECALL_SPELL_NAME)
+    if idx then
+        local texture = GetSpellTexture(idx, BOOKTYPE_SPELL)
+        if texture then
+            return texture
+        end
+    end
+    return RECALL_ICON_FALLBACK
 end
 
 RefreshButton = function(element)
@@ -184,14 +217,25 @@ CreateElementButton = function(element, index)
     btn:SetPoint("LEFT", TotemBarFrame, "LEFT", (index - 1) * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP, 0)
 
     local icon = btn:CreateTexture(name .. "Icon", "ARTWORK")
-    icon:SetAllPoints(btn)
+    -- Inset a few px so the UI-Quickslot2 border (set below) actually
+    -- frames the icon instead of being fully covered by it.
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
     icon:SetTexture(GetElementIcon(element))
     btn.icon = icon
 
-    local label = btn:CreateFontString(name .. "Label", "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("BOTTOM", btn, "TOP", 0, 2)
-    label:SetText(element)
-    btn.label = label
+    -- OmniCC-style remaining-duration text, centered on the icon.
+    -- Hidden by default; UpdateTimerDisplays() shows/updates it.
+    local timerText = btn:CreateFontString(name .. "Timer", "OVERLAY")
+    timerText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    timerText:SetPoint("CENTER", icon, "CENTER", 0, 1)
+    timerText:SetJustifyH("CENTER")
+    timerText:SetText("")
+    timerText:Hide()
+    btn.timerText = timerText
+    btn.timerVisible = false       -- cached shown-state, avoid redundant Show/Hide
+    btn.timerLastText = nil        -- cached last string, avoid redundant SetText
+    btn.timerLastLow = nil         -- cached last <=5s tint state, avoid redundant SetTextColor
 
     btn:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
     btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
@@ -209,6 +253,7 @@ CreateElementButton = function(element, index)
             local totemName = db and db.chosen and db.chosen[clickedElement]
             if totemName then
                 CastSpellByName(totemName)
+                TotemBar.recordCast(clickedElement, totemName)
             else
                 ChatOut:AddMessage("TotemBar: no totem chosen for " .. clickedElement .. " (right-click to choose)")
             end
@@ -234,6 +279,126 @@ CreateElementButton = function(element, index)
     return btn
 end
 
+-- Totemic Recall: instant-cast button, no dropdown, no per-element
+-- timer (recall has no duration of its own - it just clears totems).
+CreateRecallButton = function(index)
+    local name = "TotemBarButtonRecall"
+    local btn = CreateFrame("Button", name, TotemBarFrame)
+    btn:SetWidth(BUTTON_SIZE)
+    btn:SetHeight(BUTTON_SIZE)
+    btn:SetPoint("LEFT", TotemBarFrame, "LEFT", (index - 1) * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP, 0)
+
+    local icon = btn:CreateTexture(name .. "Icon", "ARTWORK")
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -2, 2)
+    icon:SetTexture(GetRecallIcon())
+    btn.icon = icon
+
+    btn:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+    btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+    btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+
+    btn:RegisterForClicks("LeftButtonUp")
+
+    btn:SetScript("OnClick", function()
+        CastSpellByName(RECALL_SPELL_NAME)
+        -- Totemic Recall drops every active totem at once; clear our
+        -- own-tracking timers so the icons' countdowns disappear too
+        -- (GetTotemInfo, if present, will also reflect this).
+        TotemBar.clearActiveTotems()
+    end)
+
+    btn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_TOP")
+        GameTooltip:SetText(RECALL_SPELL_NAME)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    return btn
+end
+
+-- Refreshes every element button's remaining-duration timer text.
+-- HYBRID source: prefers pfUI libtotem's GetTotemInfo(slot) when
+-- present and reporting the slot active (also catches totems cast
+-- outside TotemBar); otherwise falls back to TotemBar's own
+-- cast-tracking (TotemBar.activeTotems). Called at most ~5x/sec by
+-- OnBarUpdate below, never per-frame.
+UpdateTimerDisplays = function()
+    local now = GetTime()
+    local hasGTI = (type(GetTotemInfo) == "function")
+    local elements = TotemBar.TOTEM_ELEMENTS
+    local activeTotems = TotemBar.activeTotems
+
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local btn = elementButtons[element]
+        if btn then
+            -- Own-tracking: compute remaining, evicting the record the
+            -- moment it expires (per-element table, no growth).
+            local ownRecord = activeTotems[element]
+            local ownRemaining = nil
+            if ownRecord then
+                ownRemaining = TotemBar.remaining(ownRecord.start, ownRecord.duration, now)
+                if not ownRemaining or ownRemaining <= 0 then
+                    activeTotems[element] = nil
+                    ownRemaining = nil
+                end
+            end
+
+            -- pfUI libtotem, when present: Fire=1, Earth=2, Water=3,
+            -- Air=4 - i.e. exactly TotemBar.TOTEM_ELEMENTS' own order.
+            local gtiActive, gtiRemaining
+            if hasGTI then
+                local active, _, start, duration = GetTotemInfo(i)
+                gtiActive = active
+                if start and duration then
+                    gtiRemaining = TotemBar.remaining(start, duration, now)
+                end
+            end
+
+            local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
+
+            if remainingVal then
+                if not btn.timerVisible then
+                    btn.timerText:Show()
+                    btn.timerVisible = true
+                end
+                local text = TotemBar.formatRemaining(remainingVal)
+                if text ~= btn.timerLastText then
+                    btn.timerText:SetText(text)
+                    btn.timerLastText = text
+                end
+                local isLow = remainingVal <= 5
+                if isLow ~= btn.timerLastLow then
+                    if isLow then
+                        btn.timerText:SetTextColor(1, 0.15, 0.15, 1)
+                    else
+                        btn.timerText:SetTextColor(1, 1, 1, 1)
+                    end
+                    btn.timerLastLow = isLow
+                end
+            elseif btn.timerVisible then
+                btn.timerText:Hide()
+                btn.timerVisible = false
+                btn.timerLastText = nil
+                btn.timerLastLow = nil
+            end
+        end
+    end
+end
+
+OnBarUpdate = function()
+    timerElapsed = timerElapsed + arg1
+    if timerElapsed < TIMER_UPDATE_INTERVAL then
+        return
+    end
+    timerElapsed = 0
+    UpdateTimerDisplays()
+end
+
 OnDragStart = function()
     if not TotemBarDB.locked then
         this:StartMoving()
@@ -255,8 +420,12 @@ function TotemBar.BuildUI()
     end
 
     local numElements = table.getn(TotemBar.TOTEM_ELEMENTS)
-    local width = numElements * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP
-    local height = BUTTON_SIZE + BUTTON_GAP * 2 + 12
+    local totalButtons = numElements + 1 -- + Totemic Recall, to the right of Air
+    -- No per-button labels anymore (hover tooltip names the element/
+    -- totem instead), so the bar is just the button row plus a
+    -- symmetric BUTTON_GAP margin on every side.
+    local width = totalButtons * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP
+    local height = BUTTON_SIZE + BUTTON_GAP * 2
 
     local frame = CreateFrame("Frame", "TotemBarFrame", UIParent)
     frame:SetWidth(width)
@@ -281,6 +450,9 @@ function TotemBar.BuildUI()
     for i = 1, numElements do
         CreateElementButton(TotemBar.TOTEM_ELEMENTS[i], i)
     end
+    CreateRecallButton(totalButtons)
+
+    frame:SetScript("OnUpdate", OnBarUpdate)
 
     frame:Show()
 end
