@@ -206,7 +206,10 @@ EnsureFlyoutFrame = function()
         return flyoutFrame
     end
 
-    local f = CreateFrame("Frame", "TotemBarFlyout", UIParent)
+    -- Parent to the bar (not UIParent) so the flyout inherits the bar's
+    -- scale (UI-size slider) and hides with it. Still DIALOG strata below,
+    -- so it draws above the bar backdrop regardless of parent.
+    local f = CreateFrame("Frame", "TotemBarFlyout", TotemBarFrame)
     f:SetFrameStrata("DIALOG")
     f:SetWidth(BUTTON_SIZE + FLYOUT_PAD * 2)
     f:SetHeight(BUTTON_SIZE + FLYOUT_PAD * 2)
@@ -861,7 +864,9 @@ EnsureAssignFrame = function()
         return assignFrame
     end
 
-    local f = CreateFrame("Frame", "TotemBarAssignFrame", UIParent)
+    -- Parent to the bar so the pending panel inherits the bar's scale
+    -- (UI-size slider), like the flyout. Still DIALOG strata below.
+    local f = CreateFrame("Frame", "TotemBarAssignFrame", TotemBarFrame)
     f:SetFrameStrata("DIALOG")
     f:SetWidth(4 * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP + 40)
     f:SetHeight(BUTTON_SIZE + 34)
