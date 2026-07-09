@@ -67,8 +67,9 @@ local function CreateSlider(parent, label, minVal, maxVal, step, fmt, getter, se
 end
 
 -- Factory: a labeled push button wired to an onClick. Returns the Button.
-local function CreateButton(parent, label, onClick)
-    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+-- Named (CLAUDE.md: name all frames) so the pfDebug profiler can attribute it.
+local function CreateButton(parent, name, label, onClick)
+    local btn = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
     btn:SetWidth(140)
     btn:SetHeight(22)
     btn:SetText(label)
@@ -212,12 +213,12 @@ end
 -- (x, yStart). Kept separate so the panel body and the action buttons are
 -- two focused units.
 function TotemBar.BuildOptionsButtons(f, x, yStart)
-    local reset = CreateButton(f, "Reset position", function()
+    local reset = CreateButton(f, "TotemBarOptResetButton", "Reset position", function()
         if TotemBar.ResetPosition then TotemBar.ResetPosition() end
     end)
     reset:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart)
 
-    local macro = CreateButton(f, "Create 'Totems' macro", function()
+    local macro = CreateButton(f, "TotemBarOptMacroButton", "Create 'Totems' macro", function()
         ApplyTotemsMacro()
     end)
     macro:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 28)
