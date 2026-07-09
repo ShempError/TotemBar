@@ -116,9 +116,18 @@ Open with the minimap button's left-click or `/tb options`.
 
 ## Requirements
 
-- TurtleWoW client (WoW 1.12.1).
-- [pfUI](https://github.com/shagu/pfUI) — optional. When present, the
-  options panel adopts pfUI's look; TotemBar works standalone otherwise.
+- **Required:** a WoW 1.12.1 client (TurtleWoW). No addon dependencies —
+  TotemBar runs on the vanilla API alone.
+
+**Optional integrations** (auto-detected, never required):
+
+- [pfUI](https://github.com/shagu/pfUI) — the options panel and minimap
+  button adopt pfUI's look; if pfUI's `libtotem` is present it's used as an
+  extra source for the duration timers. Without pfUI, TotemBar uses a clean
+  Blizzard look and its own cast-tracking for timers.
+- **SuperWoW** — only the `/tb scan` debug command uses it: with SuperWoW it
+  also writes the totem scan to `imports\totembar_scan.txt`; without it,
+  `/tb scan` just prints to chat. Not needed for any normal feature.
 
 ## For developers
 
