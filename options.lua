@@ -186,6 +186,43 @@ local function BuildOptionsFrame()
     return f
 end
 
+-- Creates or updates the "Totems" convenience macro from TotemBar.macroSpec.
+-- General (account) macro, capped at 18 in 1.12; if the cap is full and no
+-- "Totems" macro exists yet, reports and does nothing. Never auto-places it
+-- on the action bar (no 1.12 API for that - the player drags it).
+local function ApplyTotemsMacro()
+    local name, body, icon = TotemBar.macroSpec()
+    local existing = GetMacroIndexByName(name)
+    if existing and existing > 0 then
+        EditMacro(existing, name, icon, body, 1, nil)
+        ChatOut:AddMessage("TotemBar: '" .. name .. "' macro updated - drag it to your action bar.")
+        return
+    end
+    local numGlobal = GetNumMacros()   -- returns global, perChar in 1.12
+    if numGlobal and numGlobal >= 18 then
+        ChatOut:AddMessage("TotemBar: macro slots full (18) - free one and retry.")
+        return
+    end
+    CreateMacro(name, icon, body, nil)
+    ChatOut:AddMessage("TotemBar: '" .. name .. "' macro created - drag it to your action bar.")
+end
+
+-- Adds the Reset-position and Create-macro buttons to the options frame.
+-- Called by BuildOptionsFrame (Task 3) after the sliders, at layout cursor
+-- (x, yStart). Kept separate so the panel body and the action buttons are
+-- two focused units.
+function TotemBar.BuildOptionsButtons(f, x, yStart)
+    local reset = CreateButton(f, "Reset position", function()
+        if TotemBar.ResetPosition then TotemBar.ResetPosition() end
+    end)
+    reset:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart)
+
+    local macro = CreateButton(f, "Create 'Totems' macro", function()
+        ApplyTotemsMacro()
+    end)
+    macro:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 28)
+end
+
 -- Show/hide the options panel (builds it lazily). Left-click on the minimap
 -- button and /tb options both call this.
 function TotemBar.ToggleOptions()
