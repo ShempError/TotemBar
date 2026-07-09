@@ -96,7 +96,7 @@ No dependencies required.
 | Hover element button | Show a flyout of the element's other known totems |
 | Left-click flyout totem | Cast it once (doesn't change the default) |
 | Right-click flyout totem | Set it as the slot's new default |
-| Left-click Recall button | Cast Totemic Recall |
+| Left-click Recall button | Cast Totemic Recall (only when totems are out — saves the 6s cooldown) |
 | Right-click Recall button | Toggle auto-recall (recall-before-redeploy) |
 | Left-click drop-set button | Cast all four chosen totems (same as the "Totems" macro) |
 | Left-click minimap button | Open options |

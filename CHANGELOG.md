@@ -2,6 +2,15 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.1.3 — 2026-07-09
+
+### Fixed
+- **Totemic Recall no longer wastes its 6-second cooldown.** Recall — via the
+  button, its keybinding, or the "Totems" macro's auto-recall — now only fires
+  when you actually have totems out. Casting it with nothing down put Recall on
+  its 6s cooldown, so a set placed right after couldn't be recalled for 6
+  seconds. With nothing out, TotemBar now skips the cast (with a brief note).
+
 ## v0.1.2 — 2026-07-09
 
 ### Added
