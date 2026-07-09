@@ -197,6 +197,57 @@ TotemBar.RefreshAll = function()
     end
 end
 
+-- Bind-mode key overlays: a small top-right FontString on each bindable
+-- button/flyout icon, shown only in bind mode, with the currently-bound key.
+-- Declared here, BEFORE EnsureFlyoutFrame/CreateElementButton/
+-- CreateRecallButton/CreateDropSetButton (all of which call
+-- registerBindOverlay from their function bodies): Lua resolves a `local`
+-- as an upvalue only for code appearing lexically after its declaration, so
+-- this block must sit above every factory that references it, not just
+-- above CreateElementButton (EnsureFlyoutFrame is defined earlier in the
+-- file than the element/recall/dropset button factories).
+local bindOverlayTargets = {}   -- { frame = button, action = fn()->command }
+
+local function ensureBindOverlay(frame)
+    if frame.bindKeyText then
+        return frame.bindKeyText
+    end
+    local fs = frame:CreateFontString(nil, "OVERLAY")
+    fs:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    fs:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+    fs:SetTextColor(1, 0.9, 0.2)
+    fs:Hide()
+    frame.bindKeyText = fs
+    return fs
+end
+
+-- action is a function returning the binding command for this frame right now
+-- (flyout icons change totem), or nil.
+local function registerBindOverlay(frame, actionFn)
+    ensureBindOverlay(frame)
+    tinsert(bindOverlayTargets, { frame = frame, action = actionFn })
+end
+
+TotemBar.refreshBindOverlays = function()
+    local on = TotemBar.isBindMode and TotemBar.isBindMode()
+    for i = 1, table.getn(bindOverlayTargets) do
+        local t = bindOverlayTargets[i]
+        local fs = t.frame.bindKeyText
+        if not on then
+            fs:Hide()
+        else
+            local cmd = t.action()
+            local key = cmd and GetBindingKey(cmd) or nil
+            if key then
+                fs:SetText(GetBindingText(key, "KEY_", 1))
+            else
+                fs:SetText("")
+            end
+            fs:Show()
+        end
+    end
+end
+
 -- Lazily builds the single shared flyout frame plus its pool of icon
 -- buttons (TotemBarFlyoutIcon1..MAX_FLYOUT_ICONS), stacked bottom-up so
 -- ShowFlyout can just Show the first N. DIALOG strata so it draws above
@@ -313,6 +364,12 @@ EnsureFlyoutFrame = function()
         end)
 
         ico:Hide()
+        registerBindOverlay(ico, function()
+            if ico.totemName then
+                return "TOTEMBAR_TOTEM_" .. TotemBar.bindingSuffix(ico.totemName)
+            end
+            return nil
+        end)
         flyoutIcons[i] = ico
     end
 
@@ -382,6 +439,12 @@ ShowFlyout = function(button, element)
     f:ClearAllPoints()
     f:SetPoint("BOTTOM", button, "TOP", 0, FLYOUT_GAP)
     f:Show()
+    -- Freshly-populated flyout icons need their overlays re-driven right
+    -- away (rather than waiting for the next UPDATE_BINDINGS/toggle) so
+    -- keys show immediately while bind mode is already on.
+    if TotemBar.refreshBindOverlays then
+        TotemBar.refreshBindOverlays()
+    end
 end
 
 -- Re-drives the cooldown swipe on every CURRENTLY-SHOWN pooled flyout
@@ -569,6 +632,7 @@ CreateElementButton = function(element, index)
     end)
 
     elementButtons[element] = btn
+    registerBindOverlay(btn, function() return "CLICK " .. "TotemBarButton" .. element .. ":LeftButton" end)
     return btn
 end
 
@@ -698,6 +762,7 @@ CreateRecallButton = function(index)
 
     recallButton = btn
     RefreshRecallIndicator()
+    registerBindOverlay(btn, function() return "CLICK TotemBarButtonRecall:LeftButton" end)
 
     return btn
 end
@@ -740,6 +805,7 @@ CreateDropSetButton = function(index)
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    registerBindOverlay(btn, function() return "CLICK TotemBarButtonDropSet:LeftButton" end)
     return btn
 end
 

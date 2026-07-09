@@ -66,3 +66,97 @@ if not TotemBar.ToggleBindMode then
         ChatOut:AddMessage("TotemBar: key-bind mode not available.")
     end
 end
+
+-- ===== Hover-bind mode =====
+-- Toggle a mode where hovering a bar button / flyout totem and pressing a
+-- key binds that key to the thing's action (buttons -> CLICK binding, flyout
+-- totems -> the named per-totem binding). ESC clears the hovered thing's
+-- binding. Bindings persist via the client (SaveBindings), no addon SV.
+
+local bindMode = false
+local captureFrame = nil
+
+-- Base keys that are pure modifiers - never bind these alone.
+local BARE_MODIFIERS = {
+    LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true,
+    LALT = true, RALT = true, UNKNOWN = true,
+}
+
+function TotemBar.isBindMode()
+    return bindMode
+end
+
+-- Resolves the mouse-focused frame to a binding action. Uses the pure
+-- TotemBar.actionForButton with the frame's global name and, for a flyout
+-- icon, its current .totemName.
+local function actionForFocus(focus)
+    if not focus then
+        return nil
+    end
+    local totemName = focus.totemName   -- set on flyout icon buttons when shown
+    local fname = focus.GetName and focus:GetName() or nil
+    return TotemBar.actionForButton(fname, totemName)
+end
+
+local function ensureCaptureFrame()
+    if captureFrame then
+        return captureFrame
+    end
+    local f = CreateFrame("Frame", "TotemBarBindCapture", UIParent)
+    f:SetAllPoints(UIParent)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:EnableKeyboard(false)
+    f:Hide()
+    f:SetScript("OnKeyDown", function()
+        local key = arg1   -- NOTE: OnKeyDown arg1 = key name string (verify in-game)
+        if not key or BARE_MODIFIERS[key] then
+            return
+        end
+        local focus = GetMouseFocus()
+        local action = actionForFocus(focus)
+        if not action then
+            return
+        end
+        if key == "ESCAPE" then
+            local k1, k2 = GetBindingKey(action)
+            if k1 then SetBinding(k1) end
+            if k2 then SetBinding(k2) end
+        else
+            local full = TotemBar.modifierPrefix(IsAltKeyDown(), IsControlKeyDown(), IsShiftKeyDown()) .. key
+            SetBinding(full)          -- clear whatever `full` was bound to
+            SetBinding(full, action)  -- bind it to this action
+        end
+        SaveBindings(GetCurrentBindingSet())
+        if TotemBar.refreshBindOverlays then
+            TotemBar.refreshBindOverlays()
+        end
+    end)
+    captureFrame = f
+    return f
+end
+
+function TotemBar.ToggleBindMode()
+    bindMode = not bindMode
+    local f = ensureCaptureFrame()
+    if bindMode then
+        f:EnableKeyboard(true)
+        f:Show()
+        ChatOut:AddMessage("TotemBar: key-bind mode ON - hover a button or flyout totem and press a key. ESC clears. /tb bind to exit.")
+    else
+        f:EnableKeyboard(false)
+        f:Hide()
+        ChatOut:AddMessage("TotemBar: key-bind mode OFF.")
+    end
+    if TotemBar.refreshBindOverlays then
+        TotemBar.refreshBindOverlays()
+    end
+end
+
+-- Refresh overlays whenever the client's bindings change.
+local bindEvents = CreateFrame("Frame", "TotemBarBindEventFrame", UIParent)
+bindEvents:RegisterEvent("UPDATE_BINDINGS")
+bindEvents:SetScript("OnEvent", function()
+    if TotemBar.refreshBindOverlays then
+        TotemBar.refreshBindOverlays()
+    end
+end)
