@@ -733,8 +733,12 @@ CreateRecallButton = function(index)
             end
             RefreshRecallIndicator()
         else
-            if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
+            -- Cast FIRST so Totemic Recall stays instant. The refund snapshot
+            -- does a hidden-tooltip SetSpell scan; running it BEFORE the cast
+            -- delayed the (instant) recall. activeTotems is still populated
+            -- here (clearActiveTotems runs after), so the learner keeps its data.
             CastSpellByName(RECALL_SPELL_NAME)
+            if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
             -- Totemic Recall drops every active totem at once; clear our
             -- own-tracking timers so the icons' countdowns disappear too
             -- (GetTotemInfo, if present, will also reflect this).

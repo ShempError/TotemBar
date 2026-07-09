@@ -53,8 +53,11 @@ end
 
 -- Cast Totemic Recall and clear own-tracking (mirrors the Recall button).
 function TotemBar.CastRecall()
-    if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
+    -- Cast FIRST (keep Recall instant); snapshot the refund cost afterward
+    -- from the still-populated activeTotems, then clear. See the Recall button
+    -- in ui.lua for why the pre-cast tooltip scan must not run first.
     CastSpellByName("Totemic Recall")
+    if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
     if TotemBar.clearActiveTotems then
         TotemBar.clearActiveTotems()
     end
