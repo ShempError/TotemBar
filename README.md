@@ -51,8 +51,13 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 ## Install
 
-1. Copy the `TotemBar` folder into your `Interface\AddOns\` directory.
-2. Restart the client (or `/reload` if you're just updating files that
+1. Download **`TotemBar-vX.Y.Z.zip`** from the
+   [**Releases**](https://github.com/ShempError/TotemBar/releases) page.
+   *(Use the Release zip, not the green "Code → Download ZIP" — that one
+   names the folder `TotemBar-master`, which WoW won't load.)*
+2. Extract it and drop the resulting **`TotemBar`** folder straight into your
+   `Interface\AddOns\` directory — no renaming needed.
+3. Restart the client (or `/reload` if you're just updating files that
    already exist on disk — see [Notes](#notes) below).
 
 No dependencies required.
