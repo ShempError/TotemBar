@@ -1094,8 +1094,10 @@ local function HandleSlashCommand(msg)
         else
             ChatOut:AddMessage("TotemBar: assign failed - " .. tostring(reason))
         end
+    elseif cmd == "options" or cmd == "opt" then
+        TotemBar.ToggleOptions()
     else
-        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign")
+        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options")
     end
 end
 

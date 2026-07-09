@@ -12,3 +12,4 @@ core\config.lua
 core\assign.lua
 core\optionslogic.lua
 ui.lua
+options.lua
