@@ -1013,6 +1013,44 @@ function TotemBar.BuildUI()
     end
 end
 
+-- Scales the bar while keeping its TOP-LEFT corner visually fixed, so the
+-- bar grows/shrinks toward the bottom-right instead of drifting away from
+-- where the player put it. SetScale scales the anchor offset too, so a naive
+-- SetScale moves the frame; here we capture the top-left's ABSOLUTE screen
+-- position (local coord * effective scale = pixels), apply the new scale,
+-- then re-anchor TOPLEFT so those pixels are preserved. Persists the new
+-- scale + anchor so the next login reproduces it.
+function TotemBar.SetBarScale(newScale)
+    local f = TotemBarFrame
+    if not f then
+        return
+    end
+    if not newScale or newScale <= 0 then
+        newScale = 1
+    end
+    local before = f:GetEffectiveScale()
+    local left = f:GetLeft()
+    local top = f:GetTop()
+    f:SetScale(newScale)
+    if left and top and before then
+        local leftPx = left * before
+        local topPx = top * before
+        local after = f:GetEffectiveScale()
+        f:ClearAllPoints()
+        f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", leftPx / after, topPx / after)
+    end
+    if TotemBarDB then
+        TotemBarDB.scale = newScale
+        local p, _, rp, x, y = f:GetPoint()
+        if p then
+            TotemBarDB.point = p
+            TotemBarDB.relPoint = rp
+            TotemBarDB.x = x
+            TotemBarDB.y = y
+        end
+    end
+end
+
 -- Shows/hides the bar and persists the choice (TotemBarDB.hidden). Driven
 -- by the options panel's "Show bar" checkbox, the minimap right-click, and
 -- the bare /tb command.

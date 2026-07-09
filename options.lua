@@ -181,8 +181,12 @@ local function BuildOptionsFrame()
     widgets.scale = CreateSlider(f, "UI size", 0.5, 2.0, 0.05, "UI size: %.2f",
         function() return TotemBarDB.scale end,
         function(v)
-            TotemBarDB.scale = v
-            if TotemBarFrame then TotemBarFrame:SetScale(v) end
+            if TotemBar.SetBarScale then
+                TotemBar.SetBarScale(v)
+            elseif TotemBarFrame then
+                TotemBarDB.scale = v
+                TotemBarFrame:SetScale(v)
+            end
         end)
     place(widgets.scale, -44)
 
