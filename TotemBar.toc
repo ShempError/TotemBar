@@ -13,3 +13,4 @@ core\assign.lua
 core\optionslogic.lua
 ui.lua
 options.lua
+minimap.lua
