@@ -905,11 +905,27 @@ end
 local eventFrame = CreateFrame("Frame", "TotemBarEventFrame", UIParent)
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:SetScript("OnEvent", function()
     if event == "ADDON_LOADED" and arg1 == "TotemBar" then
         TotemBar.ensureDefaults()
         TotemBar.BuildUI()
         eventFrame:UnregisterEvent("ADDON_LOADED")
+    elseif event == "SPELLS_CHANGED" then
+        -- BuildUI resolves each slot's icon off the live spellbook at
+        -- ADDON_LOADED time, but the spellbook (GetSpellName/
+        -- GetSpellTexture) isn't reliably populated that early after a
+        -- login/reload - so a SAVED totem's icon lookup falls through to
+        -- EMPTY_ICON (the question-mark texture) even though its name is
+        -- stored fine. SPELLS_CHANGED fires once the spellbook is ready
+        -- (and whenever it later changes), so re-resolve every icon here.
+        local elements = TotemBar.TOTEM_ELEMENTS
+        for i = 1, table.getn(elements) do
+            RefreshButton(elements[i])
+        end
+        if recallButton and recallButton.icon then
+            recallButton.icon:SetTexture(GetRecallIcon())
+        end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         local elements = TotemBar.TOTEM_ELEMENTS
         for i = 1, table.getn(elements) do
