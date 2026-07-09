@@ -56,4 +56,23 @@ H.run("findFilledSlot: single-element list", function()
     H.assert_eq(TotemBar.findFilledSlot({}, elements, 1), nil, "single slot empty -> nil")
 end)
 
+H.run("shouldRecall: autoRecall off -> never recall", function()
+    H.assert_eq(TotemBar.shouldRecall(false, 0, 100, 2), false, "off -> false even if never deployed")
+    H.assert_eq(TotemBar.shouldRecall(false, 10, 100, 2), false, "off -> false regardless of timing")
+end)
+
+H.run("shouldRecall: never deployed -> recall", function()
+    H.assert_eq(TotemBar.shouldRecall(true, 0, 100, 2), true, "lastDeploy 0 -> true")
+    H.assert_eq(TotemBar.shouldRecall(true, nil, 100, 2), true, "lastDeploy nil -> true")
+end)
+
+H.run("shouldRecall: deployed long ago -> recall", function()
+    H.assert_eq(TotemBar.shouldRecall(true, 100, 103, 2), true, "3s > 2s guard -> true")
+end)
+
+H.run("shouldRecall: just deployed -> suppress recall", function()
+    H.assert_eq(TotemBar.shouldRecall(true, 100, 101, 2), false, "1s within 2s guard -> false")
+    H.assert_eq(TotemBar.shouldRecall(true, 100, 102, 2), false, "exactly 2s (not > guard) -> false")
+end)
+
 H.summary()

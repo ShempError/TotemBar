@@ -7,10 +7,17 @@ TotemBar = TotemBar or {}
 
 TotemBar.DEFAULT_GAP_SECONDS = 2
 
+-- Anti double-press guard for recallAndCastAll: if a deploy happened within
+-- this many seconds, a rapid second press SKIPS the recall (so it doesn't
+-- pull the just-placed totems, which are still on their ~1.5s element
+-- cooldown and couldn't be re-placed).
+TotemBar.DEFAULT_RECALL_GUARD = 2
+
 -- Cycle state: which slot was cast last, and when.
 TotemBar.castState = TotemBar.castState or {
     index = 0,      -- 0 = no cast yet (or state was reset)
     lastTime = 0,
+    lastDeployTime = 0,
 }
 
 -- Own-tracking table for the OmniCC-style remaining-duration display in
@@ -278,6 +285,28 @@ function TotemBar.castAll()
     end
 end
 
+-- Pure: should recallAndCastAll fire Totemic Recall this call?
+--   autoRecall off              -> false (never recall)
+--   never deployed (nil / <=0)  -> true  (nothing fresh to protect)
+--   last deploy > guard ago     -> true
+--   last deploy within guard    -> false (protect just-placed totems from a
+--                                  rapid accidental second press)
+function TotemBar.shouldRecall(autoRecall, lastDeployTime, now, guardSeconds)
+    if not autoRecall then
+        return false
+    end
+    if not lastDeployTime or lastDeployTime <= 0 then
+        return true
+    end
+    if not guardSeconds then
+        return true
+    end
+    if (now - lastDeployTime) > guardSeconds then
+        return true
+    end
+    return false
+end
+
 -- Recall-then-deploy: when TotemBarDB.autoRecall is on (the default -
 -- toggleable via the Recall button's right-click, see ui.lua), casts
 -- Totemic Recall FIRST (drops existing totems and refunds some mana)
@@ -286,11 +315,21 @@ end
 -- the flag off). Like castAll, relies on TurtleWoW allowing several
 -- CastSpellByName calls in one Lua frame -- verify in-game.
 --
+-- Guarded against rapid double-presses: shouldRecall() only fires Recall
+-- if the last deploy was more than DEFAULT_RECALL_GUARD seconds ago. A
+-- fast accidental second press then just re-attempts placement (a no-op,
+-- since the totems are still up and each element is on its own ~1.5s
+-- cooldown) instead of recalling the totems that were just placed.
+--
 -- Intended for a macro: `/script TotemBar.recallAndCastAll()`
 function TotemBar.recallAndCastAll()
-    if TotemBarDB and TotemBarDB.autoRecall then
+    local now = GetTime()
+    local autoRecall = TotemBarDB and TotemBarDB.autoRecall
+    local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
+    if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard) then
         CastSpellByName("Totemic Recall")
         TotemBar.clearActiveTotems()
     end
     TotemBar.castAll()
+    TotemBar.castState.lastDeployTime = now
 end
