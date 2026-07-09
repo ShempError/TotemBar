@@ -12,7 +12,7 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 Latest release: **v0.1.2**. Full history in **[CHANGELOG.md](CHANGELOG.md)**.
 
-📸 **Screenshots** live on the **[Screenshots wiki page](https://github.com/ShempError/TotemBar/wiki/Screenshots)**.
+📸 **Screenshots:** see **[SCREENSHOTS.md](SCREENSHOTS.md)** — the bar, hover flyout, key bindings, and hover-bind mode.
 
 ## Features
 
