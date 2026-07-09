@@ -10,13 +10,11 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 ## Screenshots
 
-*Screenshots coming soon.*
+![The totem bar, with the Totemic Recall button and its tooltip](screenshots/bar.png)
 
-<!-- Drop image files into a `screenshots/` folder and uncomment:
-![The totem bar](screenshots/bar.png)
-![Options panel](screenshots/options.png)
-![Minimap button and hover flyout](screenshots/minimap-flyout.png)
--->
+![Hover an element button for a flyout of your other totems, with the real in-game spell tooltip](screenshots/flyout.png)
+
+![The options panel (shown with pfUI installed)](screenshots/options.png)
 
 ## Features
 
