@@ -53,6 +53,7 @@ end
 
 -- Cast Totemic Recall and clear own-tracking (mirrors the Recall button).
 function TotemBar.CastRecall()
+    if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
     CastSpellByName("Totemic Recall")
     if TotemBar.clearActiveTotems then
         TotemBar.clearActiveTotems()

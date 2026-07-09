@@ -733,6 +733,7 @@ CreateRecallButton = function(index)
             end
             RefreshRecallIndicator()
         else
+            if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
             CastSpellByName(RECALL_SPELL_NAME)
             -- Totemic Recall drops every active totem at once; clear our
             -- own-tracking timers so the icons' countdowns disappear too
@@ -750,6 +751,12 @@ CreateRecallButton = function(index)
             state = "ON"
         end
         GameTooltip:AddLine("Auto Recall Toggle (right-click): " .. state, 1, 1, 1)
+        local activeCost = TotemBar.sumActiveCost(TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS, GetTime(), TotemBar.getTotemManaCost, TotemBar.remaining)
+        local pct = (TotemBarDB and TotemBarDB.recallRefundPct) or 0.25
+        local refund = TotemBar.refundAmount(pct, activeCost)
+        if refund > 0 then
+            GameTooltip:AddLine("Refund: ~" .. refund .. " mana", 0.6, 0.6, 1)
+        end
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function()
@@ -797,6 +804,10 @@ CreateDropSetButton = function(index)
         GameTooltip:SetOwner(this, "ANCHOR_TOP")
         GameTooltip:SetText("Drop all totems")
         GameTooltip:AddLine("Left-click: cast your whole set", 1, 1, 1)
+        local cost = TotemBar.sumChosenCost(TotemBarDB.chosen, TotemBar.TOTEM_ELEMENTS, TotemBar.getTotemManaCost)
+        if cost and cost > 0 then
+            GameTooltip:AddLine("Mana: " .. cost, 0.6, 0.6, 1)
+        end
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
