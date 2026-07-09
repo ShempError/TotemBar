@@ -75,6 +75,7 @@ end
 
 local bindMode = false
 local captureFrame = nil
+local infoBox = nil
 
 -- Base keys that are pure modifiers - never bind these alone.
 local BARE_MODIFIERS = {
@@ -142,16 +143,56 @@ local function ensureCaptureFrame()
     return f
 end
 
+-- Lazily builds a visible on-screen info box shown while bind mode is
+-- active, so the mode (which otherwise only shows via a chat message and
+-- stays on until ESC) is hard to miss. pfUI's backdrop skin is used when
+-- available, matching the rest of the addon's chrome.
+local function ensureBindInfoBox()
+    if infoBox then
+        return infoBox
+    end
+    local f = CreateFrame("Frame", "TotemBarBindInfo", UIParent)
+    f:SetWidth(380)
+    f:SetHeight(80)
+    f:SetPoint("TOP", UIParent, "TOP", 0, -160)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 32,
+        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.9)
+    if pfUI and pfUI.api and pfUI.api.CreateBackdrop then
+        f:SetBackdrop(nil)
+        pfUI.api.CreateBackdrop(f, nil, true)
+    end
+    local t = f:CreateFontString("TotemBarBindInfoText", "OVERLAY", "GameFontNormal")
+    t:SetPoint("CENTER", f, "CENTER", 0, 0)
+    t:SetJustifyH("CENTER")
+    t:SetText("|cff33ffccKey-Bind Mode ACTIVE|r\nHover a bar button or flyout totem and press a key to bind it.\nESC over a button clears its key.  ESC over empty space (or the options button) exits.")
+    if pfUI and pfUI.font_default then
+        t:SetFont(pfUI.font_default, 12)
+    end
+    f:Hide()
+    infoBox = f
+    return f
+end
+
 function TotemBar.ToggleBindMode()
     bindMode = not bindMode
     local f = ensureCaptureFrame()
     if bindMode then
         f:EnableKeyboard(true)
         f:Show()
+        ensureBindInfoBox():Show()
         ChatOut:AddMessage("TotemBar: key-bind mode ON - hover a button or flyout totem and press a key to bind. ESC over a button clears its key; ESC over nothing (or the options button) exits.")
     else
         f:EnableKeyboard(false)
         f:Hide()
+        if infoBox then
+            infoBox:Hide()
+        end
         ChatOut:AddMessage("TotemBar: key-bind mode OFF.")
     end
     if TotemBar.refreshBindOverlays then

@@ -198,7 +198,8 @@ TotemBar.RefreshAll = function()
 end
 
 -- Bind-mode key overlays: a small top-right FontString on each bindable
--- button/flyout icon, shown only in bind mode, with the currently-bound key.
+-- button/flyout icon, ALWAYS shown (action-bar-hotkey style) whenever a key
+-- is bound, hidden only when nothing is bound. Independent of bind mode.
 -- Declared here, BEFORE EnsureFlyoutFrame/CreateElementButton/
 -- CreateRecallButton/CreateDropSetButton (all of which call
 -- registerBindOverlay from their function bodies): Lua resolves a `local`
@@ -229,21 +230,16 @@ local function registerBindOverlay(frame, actionFn)
 end
 
 TotemBar.refreshBindOverlays = function()
-    local on = TotemBar.isBindMode and TotemBar.isBindMode()
     for i = 1, table.getn(bindOverlayTargets) do
         local t = bindOverlayTargets[i]
         local fs = t.frame.bindKeyText
-        if not on then
-            fs:Hide()
-        else
-            local cmd = t.action()
-            local key = cmd and GetBindingKey(cmd) or nil
-            if key then
-                fs:SetText(TotemBar.shortenKey(key))
-            else
-                fs:SetText("")
-            end
+        local cmd = t.action()
+        local key = cmd and GetBindingKey(cmd) or nil
+        if key then
+            fs:SetText(TotemBar.shortenKey(key))
             fs:Show()
+        else
+            fs:Hide()
         end
     end
 end
@@ -1125,6 +1121,10 @@ function TotemBar.BuildUI()
     if TotemBarDB.hidden then
         frame:Hide()
     end
+
+    -- Show any already-bound key labels right after login (overlays are
+    -- always visible now, not gated on bind mode - see refreshBindOverlays).
+    TotemBar.refreshBindOverlays()
 end
 
 -- Scales the bar while keeping its TOP-LEFT corner visually fixed, so the
