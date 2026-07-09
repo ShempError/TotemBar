@@ -114,6 +114,13 @@ local function ensureCaptureFrame()
         end
         local focus = GetMouseFocus()
         local action = actionForFocus(focus)
+        if key == "ESCAPE" and not action then
+            -- Keyboard capture swallows all keys while bind mode is on, so
+            -- ESC over nothing is the keyboard exit (the options button also
+            -- toggles it off). ESC over a button clears that button below.
+            TotemBar.ToggleBindMode()
+            return
+        end
         if not action then
             return
         end
@@ -141,7 +148,7 @@ function TotemBar.ToggleBindMode()
     if bindMode then
         f:EnableKeyboard(true)
         f:Show()
-        ChatOut:AddMessage("TotemBar: key-bind mode ON - hover a button or flyout totem and press a key. ESC clears. /tb bind to exit.")
+        ChatOut:AddMessage("TotemBar: key-bind mode ON - hover a button or flyout totem and press a key to bind. ESC over a button clears its key; ESC over nothing (or the options button) exits.")
     else
         f:EnableKeyboard(false)
         f:Hide()
