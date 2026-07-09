@@ -11,6 +11,20 @@ TotemBar = TotemBar or {}
 local ChatOut = DEFAULT_CHAT_FRAME or ChatFrame1
 local optionsFrame = nil
 
+-- Applies pfUI's font to a FontString (the main "matches pfUI" tweak) at the
+-- given size, or falls back to a small game font when pfUI is absent.
+local function ApplyFont(fontString, size)
+    if not fontString then
+        return
+    end
+    if pfUI and pfUI.font_default then
+        local sz = size or (pfUI_config and pfUI_config.global and pfUI_config.global.font_size) or 12
+        fontString:SetFont(pfUI.font_default, sz)
+    else
+        fontString:SetFontObject(GameFontNormalSmall)
+    end
+end
+
 -- Unique widget-name counters (template child labels resolve via getglobal,
 -- so every widget needs a non-nil, unique frame name).
 local cbIndex = 0
@@ -27,7 +41,7 @@ local function CreateCheckbox(parent, label, getter, setter)
     local lbl = getglobal(name .. "Text")
     if lbl then
         lbl:SetText(label)
-        lbl:SetFontObject(GameFontNormalSmall)
+        ApplyFont(lbl)
     end
     cb.tbGet = getter
     cb.tbSet = setter
@@ -52,8 +66,16 @@ local function CreateSlider(parent, label, minVal, maxVal, step, fmt, getter, se
     sl:SetMinMaxValues(minVal, maxVal)   -- BEFORE SetValue, else clamps to 0
     sl:SetValueStep(step)
     local low, high, txt = getglobal(name .. "Low"), getglobal(name .. "High"), getglobal(name .. "Text")
-    if low then low:SetText(tostring(minVal)) end
-    if high then high:SetText(tostring(maxVal)) end
+    if low then low:SetText(tostring(minVal)); ApplyFont(low) end
+    if high then high:SetText(tostring(maxVal)); ApplyFont(high) end
+    if txt then
+        -- Left-align the value label above the slider (the template centers it),
+        -- so it lines up with the left-aligned checkbox labels. pfUI font.
+        txt:ClearAllPoints()
+        txt:SetPoint("BOTTOMLEFT", sl, "TOPLEFT", 0, 2)
+        txt:SetJustifyH("LEFT")
+        ApplyFont(txt)
+    end
     sl.tbLabel = label
     sl.tbFmt = fmt
     sl.tbText = txt
@@ -121,10 +143,7 @@ local function BuildOptionsFrame()
     local title = f:CreateFontString("TotemBarOptionsTitle", "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", f, "TOP", 0, -16)
     title:SetText("TotemBar Options")
-    if pfUI and pfUI.font_default then
-        local fs = (pfUI_config and pfUI_config.global and pfUI_config.global.font_size) or 12
-        title:SetFont(pfUI.font_default, fs)
-    end
+    ApplyFont(title, 14)
 
     local close = CreateFrame("Button", "TotemBarOptionsClose", f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
@@ -239,14 +258,20 @@ end
 -- (x, yStart). Kept separate so the panel body and the action buttons are
 -- two focused units.
 function TotemBar.BuildOptionsButtons(f, x, yStart)
+    -- Full content width (frame width minus the left/right margin x), so the
+    -- buttons read as a balanced block instead of a narrow left-biased pair.
+    local w = f:GetWidth() - (x * 2)
+
     local reset = CreateButton(f, "TotemBarOptResetButton", "Reset position", function()
         if TotemBar.ResetPosition then TotemBar.ResetPosition() end
     end)
+    reset:SetWidth(w)
     reset:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart)
 
     local macro = CreateButton(f, "TotemBarOptMacroButton", "Create 'Totems' macro", function()
         ApplyTotemsMacro()
     end)
+    macro:SetWidth(w)
     macro:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 28)
 end
 
