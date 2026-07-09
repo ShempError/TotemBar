@@ -186,6 +186,10 @@ they depend on the live client.
 - A full client restart is needed if `.toc` entries change or files are
   added/removed/renamed.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT (see LICENSE).
