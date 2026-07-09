@@ -42,7 +42,10 @@ local function BuildMinimapButton()
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     border:SetWidth(53)
     border:SetHeight(53)
-    border:SetPoint("TOPLEFT", btn, "TOPLEFT", -5, 5)
+    -- Center the ring on the button/icon. TOPLEFT-offset anchoring was off
+    -- (ring sat down-right of the icon in-game); CENTER is size-independent
+    -- and keeps the ring concentric with the 20px icon.
+    border:SetPoint("CENTER", btn, "CENTER", 0, 0)
 
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
