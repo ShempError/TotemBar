@@ -1,0 +1,34 @@
+<Bindings>
+  <Binding name="TOTEMBAR_DROPSET" header="TOTEMBAR">TotemBar.recallAndCastAll();</Binding>
+  <Binding name="TOTEMBAR_RECALL">TotemBar.CastRecall();</Binding>
+  <Binding name="TOTEMBAR_TOGGLEBAR">TotemBar.ToggleBar();</Binding>
+  <Binding name="TOTEMBAR_TOGGLEOPTIONS">TotemBar.ToggleOptions();</Binding>
+  <Binding name="TOTEMBAR_TOGGLEBIND">TotemBar.ToggleBindMode();</Binding>
+  <Binding name="TOTEMBAR_CAST_FIRE">TotemBar.CastElement("Fire");</Binding>
+  <Binding name="TOTEMBAR_CAST_EARTH">TotemBar.CastElement("Earth");</Binding>
+  <Binding name="TOTEMBAR_CAST_WATER">TotemBar.CastElement("Water");</Binding>
+  <Binding name="TOTEMBAR_CAST_AIR">TotemBar.CastElement("Air");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_SEARING_TOTEM" header="TOTEMBAR_FIRE">TotemBar.CastTotem("Searing Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_FIRE_NOVA_TOTEM">TotemBar.CastTotem("Fire Nova Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_MAGMA_TOTEM">TotemBar.CastTotem("Magma Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_FLAMETONGUE_TOTEM">TotemBar.CastTotem("Flametongue Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_FROST_RESISTANCE_TOTEM">TotemBar.CastTotem("Frost Resistance Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_EARTHBIND_TOTEM" header="TOTEMBAR_EARTH">TotemBar.CastTotem("Earthbind Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_STONECLAW_TOTEM">TotemBar.CastTotem("Stoneclaw Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_STONESKIN_TOTEM">TotemBar.CastTotem("Stoneskin Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_STRENGTH_OF_EARTH_TOTEM">TotemBar.CastTotem("Strength of Earth Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_TREMOR_TOTEM">TotemBar.CastTotem("Tremor Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_FIRE_RESISTANCE_TOTEM" header="TOTEMBAR_WATER">TotemBar.CastTotem("Fire Resistance Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_HEALING_STREAM_TOTEM">TotemBar.CastTotem("Healing Stream Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_MANA_SPRING_TOTEM">TotemBar.CastTotem("Mana Spring Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_POISON_CLEANSING_TOTEM">TotemBar.CastTotem("Poison Cleansing Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_DISEASE_CLEANSING_TOTEM">TotemBar.CastTotem("Disease Cleansing Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_MANA_TIDE_TOTEM">TotemBar.CastTotem("Mana Tide Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_GRACE_OF_AIR_TOTEM" header="TOTEMBAR_AIR">TotemBar.CastTotem("Grace of Air Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_GROUNDING_TOTEM">TotemBar.CastTotem("Grounding Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_NATURE_RESISTANCE_TOTEM">TotemBar.CastTotem("Nature Resistance Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_SENTRY_TOTEM">TotemBar.CastTotem("Sentry Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_WINDFURY_TOTEM">TotemBar.CastTotem("Windfury Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_WINDWALL_TOTEM">TotemBar.CastTotem("Windwall Totem");</Binding>
+  <Binding name="TOTEMBAR_TOTEM_TRANQUIL_AIR_TOTEM">TotemBar.CastTotem("Tranquil Air Totem");</Binding>
+</Bindings>

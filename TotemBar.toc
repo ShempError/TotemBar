@@ -11,6 +11,9 @@ core\cast.lua
 core\config.lua
 core\assign.lua
 core\optionslogic.lua
+core\bindlogic.lua
 ui.lua
 options.lua
 minimap.lua
+Bindings.xml
+bind.lua
