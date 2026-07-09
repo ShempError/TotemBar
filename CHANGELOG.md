@@ -2,6 +2,25 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.1.2 — 2026-07-09
+
+### Added
+- **Mana cost on the drop-set tooltip** — hovering the drop-set button (and the
+  "Totems" macro action) shows the total mana to drop your four chosen totems.
+- **Refund on the Totemic Recall tooltip** — shows the mana you'll get back,
+  computed live from the totems currently out (expired ones are excluded) and a
+  refund percentage that is learned from your real recall mana-gain (defaults to
+  25% until learned).
+- **Totemic Mastery duration** — when the talent is skilled, helpful totems'
+  own-tracked timers get the +20% duration so they no longer read short.
+- `/tb manadump` dev aid — writes the raw mana-cost scan (resolved rank, tooltip
+  lines, parsed cost) to `imports\totembar_manadump.txt`.
+
+### Fixed
+- Totem mana costs were read from **rank 1** instead of the highest rank you
+  actually cast, so the displayed mana was far too low. The scan now resolves
+  the highest known rank.
+
 ## v0.1.1 — 2026-07-09
 
 ### Added
