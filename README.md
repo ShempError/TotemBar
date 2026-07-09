@@ -14,8 +14,6 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 ![Hover an element button for a flyout of your other totems, with the real in-game spell tooltip](screenshots/flyout.png)
 
-![The options panel (shown with pfUI installed)](screenshots/options.png)
-
 ![The Esc → Key Bindings menu, with the TotemBar section](screenshots/keybindings.png)
 
 ![Hover-bind mode: the on-screen prompt, the options panel, and per-button key labels on the bar](screenshots/bind-mode.png)
