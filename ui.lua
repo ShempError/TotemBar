@@ -1248,8 +1248,10 @@ local function HandleSlashCommand(msg)
         end
     elseif cmd == "options" or cmd == "opt" then
         TotemBar.ToggleOptions()
+    elseif cmd == "bind" then
+        if TotemBar.ToggleBindMode then TotemBar.ToggleBindMode() end
     else
-        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options")
+        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options, /tb bind")
     end
 end
 

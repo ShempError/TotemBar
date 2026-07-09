@@ -140,7 +140,7 @@ local function BuildOptionsFrame()
 
     local f = CreateFrame("Frame", "TotemBarOptionsFrame", UIParent)
     f:SetWidth(280)
-    f:SetHeight(360)
+    f:SetHeight(388)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     f:SetFrameStrata("DIALOG")
     f:SetBackdrop({
@@ -312,6 +312,13 @@ function TotemBar.BuildOptionsButtons(f, x, yStart)
     macro:SetWidth(w)
     macro:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 28)
     AddTooltip(macro, "Creates or updates a 'Totems' macro that drops all four chosen totems in one press. Drag it from the macro window to your action bar.")
+
+    local bind = CreateButton(f, "TotemBarOptBindButton", "Key bind mode", function()
+        if TotemBar.ToggleBindMode then TotemBar.ToggleBindMode() end
+    end)
+    bind:SetWidth(w)
+    bind:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 56)
+    AddTooltip(bind, "Toggle bind mode, then hover any bar button or a flyout totem and press a key to bind it. ESC clears. Bindings are saved automatically.")
 end
 
 -- Show/hide the options panel (builds it lazily). Left-click on the minimap
