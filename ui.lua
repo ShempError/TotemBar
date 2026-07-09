@@ -294,7 +294,12 @@ EnsureFlyoutFrame = function()
         ico:SetScript("OnEnter", function()
             if this.totemName then
                 GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
-                GameTooltip:SetText(this.totemName)
+                local idx = FindSpellIndexByName(this.totemName)
+                if idx then
+                    GameTooltip:SetSpell(idx, BOOKTYPE_SPELL)
+                else
+                    GameTooltip:SetText(this.totemName)
+                end
                 GameTooltip:AddLine("Left-click: cast  /  Right-click: set default", 1, 1, 1)
                 GameTooltip:Show()
             end
@@ -538,7 +543,12 @@ CreateElementButton = function(element, index)
         local totemName = db and db.chosen and db.chosen[this.element]
         GameTooltip:SetOwner(this, "ANCHOR_TOP")
         if totemName then
-            GameTooltip:SetText(totemName)
+            local idx = FindSpellIndexByName(totemName)
+            if idx then
+                GameTooltip:SetSpell(idx, BOOKTYPE_SPELL)
+            else
+                GameTooltip:SetText(totemName)
+            end
             GameTooltip:AddLine("Left-click: cast  /  Right-click: clear", 1, 1, 1)
         else
             GameTooltip:SetText(this.element .. " (empty)")
