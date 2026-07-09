@@ -12,6 +12,7 @@ H.run("parseManaCost", function()
     H.assert_eq(TotemBar.parseManaCost("155 Mana"), 155, "155 Mana")
     H.assert_eq(TotemBar.parseManaCost("55 Mana"), 55, "55 Mana")
     H.assert_eq(TotemBar.parseManaCost("Instant"), nil, "no number")
+    H.assert_eq(TotemBar.parseManaCost("30 sec cooldown"), nil, "numeric non-mana line")
     H.assert_eq(TotemBar.parseManaCost(nil), nil, "nil")
 end)
 

@@ -11,7 +11,9 @@ function TotemBar.parseManaCost(text)
     if not text then
         return nil
     end
-    local _, _, n = string.find(text, "^(%d+) ")
+    -- Anchor to the "Mana" keyword so a numeric line like "30 sec cooldown"
+    -- can't be mistaken for the cost (don't rely on tooltip line ordering).
+    local _, _, n = string.find(text, "^(%d+) [Mm]ana")
     if n then
         return tonumber(n)
     end
