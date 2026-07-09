@@ -102,3 +102,118 @@ function TotemBar.isHelpfulTotem(name)
     end
     return true
 end
+
+-- ===== WoW-API layer (not offline-executed) =====
+
+-- Own spellbook-slot finder (ui.lua's FindSpellIndexByName is file-local).
+local function findSpellSlot(name)
+    if not name then return nil end
+    local i = 1
+    while true do
+        local n = GetSpellName(i, BOOKTYPE_SPELL)
+        if not n then return nil end
+        if n == name then return i end
+        i = i + 1
+    end
+end
+
+local scanTip = nil
+local manaCache = {}   -- name -> cost (only positive results cached)
+
+-- Reads a totem's mana cost via a hidden tooltip scan (no GetSpellManaCost on
+-- 1.12). Reflects cost talents (Tidal Focus, Restorative Totems) automatically.
+-- Cached by name; cache cleared on SPELLS_CHANGED (talent/rank changes).
+function TotemBar.getTotemManaCost(name)
+    if not name then return nil end
+    if manaCache[name] then return manaCache[name] end
+    local idx = findSpellSlot(name)
+    if not idx then return nil end
+    if not scanTip then
+        scanTip = CreateFrame("GameTooltip", "TotemBarScanTooltip", nil, "GameTooltipTemplate")
+    end
+    scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+    scanTip:ClearLines()
+    scanTip:SetSpell(idx, BOOKTYPE_SPELL)
+    local cost = nil
+    local lines = scanTip:NumLines() or 0
+    for i = 1, lines do
+        local fs = getglobal("TotemBarScanTooltipTextLeft" .. i)
+        local text = fs and fs:GetText()
+        local c = TotemBar.parseManaCost(text)
+        if c then
+            cost = c
+            break
+        end
+    end
+    if cost then manaCache[name] = cost end
+    return cost
+end
+
+-- Totemic Mastery (TWoW: +20% helpful-totem duration): cached scan of the
+-- talent trees by name.
+local masteryCached = false
+local function scanMastery()
+    masteryCached = false
+    local tabs = (GetNumTalentTabs and GetNumTalentTabs()) or 0
+    for tab = 1, tabs do
+        local num = GetNumTalents(tab)
+        for i = 1, num do
+            local tname, _, _, _, rank = GetTalentInfo(tab, i)
+            if tname == "Totemic Mastery" and rank and rank > 0 then
+                masteryCached = true
+            end
+        end
+    end
+end
+
+function TotemBar.hasTotemicMastery()
+    return masteryCached
+end
+
+-- Recall-refund auto-learn. Snapshot the summed cost of the totems currently
+-- out just before a DELIBERATE Totemic Recall; when the mana-gain message
+-- arrives shortly after, learn the real refund %.
+TotemBar.recallPendingCost = 0
+local recallExpectUntil = 0
+
+function TotemBar.snapshotRecallCost()
+    TotemBar.recallPendingCost = TotemBar.sumActiveCost(
+        TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS, GetTime(),
+        TotemBar.getTotemManaCost, TotemBar.remaining)
+    recallExpectUntil = GetTime() + 2
+end
+
+-- Events: refresh mastery, clear the cost cache on spell changes, and learn
+-- the refund % from the recall mana-gain message.
+-- Guarded: CreateFrame is nil under plain offline Lua, so this whole block is
+-- skipped there (loadfile/dofile must not error for the test suite).
+if CreateFrame then
+    local mcEvents = CreateFrame("Frame", "TotemBarManaCostEventFrame", UIParent)
+    mcEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+    mcEvents:RegisterEvent("CHARACTER_POINTS_CHANGED")
+    mcEvents:RegisterEvent("SPELLS_CHANGED")
+    mcEvents:RegisterEvent("CHAT_MSG_SPELL_SELF_BUFF")
+    mcEvents:SetScript("OnEvent", function()
+        if event == "PLAYER_ENTERING_WORLD" or event == "CHARACTER_POINTS_CHANGED" then
+            scanMastery()
+        elseif event == "SPELLS_CHANGED" then
+            manaCache = {}
+            scanMastery()
+        elseif event == "CHAT_MSG_SPELL_SELF_BUFF" then
+            if GetTime() > recallExpectUntil then return end
+            local msg = arg1
+            if not msg then return end
+            -- Learn only from a Totemic Recall mana-gain within the window.
+            -- NOTE: exact message text is locale/format dependent - VERIFY in-game
+            -- (adjust the "Totemic Recall" + number pattern if needed).
+            if string.find(msg, "Totemic Recall") then
+                local _, _, num = string.find(msg, "(%d+)")
+                local gained = tonumber(num)
+                local pct = TotemBar.learnRefundPct(gained, TotemBar.recallPendingCost)
+                if pct and TotemBarDB then
+                    TotemBarDB.recallRefundPct = pct
+                end
+            end
+        end
+    end)
+end

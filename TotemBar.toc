@@ -12,6 +12,7 @@ core\config.lua
 core\assign.lua
 core\optionslogic.lua
 core\bindlogic.lua
+core\manacost.lua
 ui.lua
 options.lua
 minimap.lua

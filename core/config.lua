@@ -34,4 +34,5 @@ function TotemBar.ensureDefaults()
         TotemBarDB.hidden = false
     end
     TotemBarDB.recallGuardSeconds = TotemBarDB.recallGuardSeconds or TotemBar.DEFAULT_RECALL_GUARD
+    TotemBarDB.recallRefundPct = TotemBarDB.recallRefundPct or 0.25
 end
