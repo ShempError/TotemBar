@@ -9,4 +9,5 @@ core\totemdata.lua
 core\known.lua
 core\cast.lua
 core\config.lua
+core\assign.lua
 ui.lua

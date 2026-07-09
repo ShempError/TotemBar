@@ -164,6 +164,21 @@ RefreshCooldown = function(element)
     CooldownFrame_SetTimer(btn.cd, start, duration, enable)
 end
 
+-- Glue for core/assign.lua's pending-assignment logic: it stays WoW-API-
+-- light and reaches the spellbook / bar refresh through these slots.
+-- isTotemKnown resolves a totem name against the live spellbook; RefreshAll
+-- re-skins every element button (used after a pending assignment is applied).
+TotemBar.isTotemKnown = function(name)
+    return FindSpellIndexByName(name) ~= nil
+end
+
+TotemBar.RefreshAll = function()
+    local elements = TotemBar.TOTEM_ELEMENTS
+    for i = 1, table.getn(elements) do
+        RefreshButton(elements[i])
+    end
+end
+
 -- Lazily builds the single shared flyout frame plus its pool of icon
 -- buttons (TotemBarFlyoutIcon1..MAX_FLYOUT_ICONS), stacked bottom-up so
 -- ShowFlyout can just Show the first N. DIALOG strata so it draws above
