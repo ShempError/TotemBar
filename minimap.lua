@@ -27,8 +27,8 @@ local function BuildMinimapButton()
     end
 
     local btn = CreateFrame("Button", "TotemBarMinimapButton", Minimap)
-    btn:SetWidth(31)
-    btn:SetHeight(31)
+    btn:SetWidth(33)
+    btn:SetHeight(33)
     btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(9)
 
@@ -40,12 +40,13 @@ local function BuildMinimapButton()
 
     local border = btn:CreateTexture(nil, "OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-    border:SetWidth(53)
-    border:SetHeight(53)
-    -- Center the ring on the button/icon. TOPLEFT-offset anchoring was off
-    -- (ring sat down-right of the icon in-game); CENTER is size-independent
-    -- and keeps the ring concentric with the 20px icon.
-    border:SetPoint("CENTER", btn, "CENTER", 0, 0)
+    -- Vanilla default-UI recipe (MiniMapTrackingButton in FrameXML): a 54px
+    -- border anchored TOPLEFT(0,0) on a 33px button. The ring is deliberately
+    -- off-centre WITHIN the texture, so it lands concentric with the icon at
+    -- this exact anchor/size - do NOT "centre" it (that pushes the ring off).
+    border:SetWidth(54)
+    border:SetHeight(54)
+    border:SetPoint("TOPLEFT", btn, "TOPLEFT", 0, 0)
 
     btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
