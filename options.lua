@@ -225,6 +225,15 @@ local function BuildOptionsFrame()
         widgets.scale:SetValue(TotemBar.clampValue(TotemBarDB.scale, 0.5, 2.0))
     end)
 
+    -- Version footer (bottom-centre), read from the .toc so it always matches
+    -- the real addon version instead of a hardcoded duplicate.
+    local ver = (GetAddOnMetadata and GetAddOnMetadata("TotemBar", "Version")) or "0.1.0"
+    local verFS = f:CreateFontString("TotemBarOptionsVersion", "OVERLAY")
+    ApplyFont(verFS, 10)
+    verFS:SetPoint("BOTTOM", f, "BOTTOM", 0, 6)
+    verFS:SetText("v" .. ver)
+    verFS:SetTextColor(0.6, 0.6, 0.6)
+
     -- ESC closes it.
     tinsert(UISpecialFrames, "TotemBarOptionsFrame")
 
