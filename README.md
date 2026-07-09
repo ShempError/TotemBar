@@ -16,6 +16,10 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 ![The options panel (shown with pfUI installed)](screenshots/options.png)
 
+![The Esc → Key Bindings menu, with the TotemBar section](screenshots/keybindings.png)
+
+![Hover-bind mode: the on-screen prompt, the options panel, and per-button key labels on the bar](screenshots/bind-mode.png)
+
 ## Features
 
 - **Four element buttons + Totemic Recall.** One button per element
@@ -31,6 +35,19 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
   default) so a rapid second press won't re-trigger Totemic Recall and wipe
   the totems you just dropped. The options panel can create/update this
   macro for you — just drag it onto your action bar afterwards.
+- **Drop-set bar button.** A button to the right of Totemic Recall does the
+  same thing as the "Totems" macro (with the same double-press guard) —
+  drop your whole set from the bar itself, no macro required.
+- **Key bindings.** Esc → Key Bindings gets a "TotemBar" section: drop all
+  totems, Totemic Recall, toggle bar, toggle options, toggle key-bind mode,
+  cast each element's chosen totem, and — per element — a binding to cast
+  every individual totem you know. Assign keys there like any other action.
+- **Hover-bind mode.** A faster way to bind: turn it on (options panel or
+  `/tb bind`), then hover any bar button or a flyout totem and press a key
+  to bind it — buttons bind their action, a flyout totem binds that exact
+  totem. ESC over a button clears its key; ESC over empty space exits.
+  Bindings are saved by the client. Each button always shows its currently
+  bound key, abbreviated (e.g. `N7` for Num Pad 7).
 - **Visual feedback.** Native action-button-style radial cooldown swipes on
   every button, plus an OmniCC-style remaining-duration timer underneath.
   Totems tint red when you've wandered out of range (detected via buff
@@ -87,6 +104,7 @@ No dependencies required.
 | Right-click flyout totem | Set it as the slot's new default |
 | Left-click Recall button | Cast Totemic Recall |
 | Right-click Recall button | Toggle auto-recall (recall-before-redeploy) |
+| Left-click drop-set button | Cast all four chosen totems (same as the "Totems" macro) |
 | Left-click minimap button | Open options |
 | Right-click minimap button | Toggle the bar |
 | Drag minimap button | Reposition it around the minimap |
@@ -99,6 +117,7 @@ No dependencies required.
 /tb lock       Lock/unlock dragging the bar
 /tb scan       Print your known totem spells (dev aid)
 /tb assign     Inject a test assignment set (dev aid)
+/tb bind       Toggle hover-bind mode
 ```
 
 ### The "Totems" macro
