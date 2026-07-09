@@ -732,11 +732,13 @@ CreateRecallButton = function(index)
                 ChatOut:AddMessage("TotemBar: auto-recall before setting OFF")
             end
             RefreshRecallIndicator()
+        elseif TotemBar.anyTotemOut and not TotemBar.anyTotemOut() then
+            -- Nothing out: don't waste Totemic Recall's 6s cooldown on a no-op
+            -- cast (otherwise a set placed right after can't be recalled for 6s).
+            ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown).")
         else
-            -- Cast FIRST so Totemic Recall stays instant. The refund snapshot
-            -- does a hidden-tooltip SetSpell scan; running it BEFORE the cast
-            -- delayed the (instant) recall. activeTotems is still populated
-            -- here (clearActiveTotems runs after), so the learner keeps its data.
+            -- Snapshot for the refund learner runs AFTER the cast: activeTotems
+            -- is still populated here (clearActiveTotems runs last).
             CastSpellByName(RECALL_SPELL_NAME)
             if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
             -- Totemic Recall drops every active totem at once; clear our

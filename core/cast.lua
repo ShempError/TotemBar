@@ -79,6 +79,23 @@ function TotemBar.remaining(start, duration, now)
     return start + duration - now
 end
 
+-- Pure: is any element's own-tracked totem still out (remaining > 0)?
+function TotemBar.anyActiveTracked(activeTotems, elements, now, remainingFn)
+    if not activeTotems then
+        return false
+    end
+    for i = 1, table.getn(elements) do
+        local rec = activeTotems[elements[i]]
+        if rec then
+            local rem = remainingFn(rec.start, rec.duration, now)
+            if rem and rem > 0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 -- Pure: decides which of two already-computed remaining-seconds values
 -- to show for one element's timer text. GetTotemInfo (pfUI's
 -- libtotem), when it reports the slot active, is authoritative;
@@ -232,6 +249,28 @@ function TotemBar.clearActiveTotems()
     end
 end
 
+-- Is at least one totem currently out? Used to avoid wasting Totemic Recall's
+-- own 6-second cooldown on a no-op cast: recalling with nothing out still puts
+-- Recall on cooldown, so a fresh set placed right after can't be recalled for
+-- 6s. Permissive on purpose - returns true if EITHER our own cast-tracking OR
+-- GetTotemInfo (pfUI libtotem / SuperWoW, when present) reports a totem out, so
+-- a legitimate recall is never wrongly blocked; only when both agree nothing is
+-- out do we suppress the cast.
+function TotemBar.anyTotemOut()
+    if TotemBar.anyActiveTracked(TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS,
+                                 GetTime(), TotemBar.remaining) then
+        return true
+    end
+    if GetTotemInfo then
+        for slot = 1, 4 do
+            if GetTotemInfo(slot) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 -- Casts exactly ONE totem per call: the next slot in Fire -> Earth ->
 -- Water -> Air order, skipping empty (unassigned) slots. If more than
 -- gapSeconds has passed since the previous call, the cycle restarts at
@@ -329,7 +368,8 @@ function TotemBar.recallAndCastAll()
     local now = GetTime()
     local autoRecall = TotemBarDB and TotemBarDB.autoRecall
     local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
-    if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard) then
+    if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
+       and TotemBar.anyTotemOut() then
         CastSpellByName("Totemic Recall")
         TotemBar.clearActiveTotems()
     end

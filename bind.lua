@@ -53,9 +53,11 @@ end
 
 -- Cast Totemic Recall and clear own-tracking (mirrors the Recall button).
 function TotemBar.CastRecall()
-    -- Cast FIRST (keep Recall instant); snapshot the refund cost afterward
-    -- from the still-populated activeTotems, then clear. See the Recall button
-    -- in ui.lua for why the pre-cast tooltip scan must not run first.
+    -- Don't waste Totemic Recall's 6s cooldown when nothing is out.
+    if TotemBar.anyTotemOut and not TotemBar.anyTotemOut() then
+        ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown).")
+        return
+    end
     CastSpellByName("Totemic Recall")
     if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
     if TotemBar.clearActiveTotems then

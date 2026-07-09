@@ -75,4 +75,15 @@ H.run("shouldRecall: just deployed -> suppress recall", function()
     H.assert_eq(TotemBar.shouldRecall(true, 100, 102, 2), false, "exactly 2s (not > guard) -> false")
 end)
 
+H.run("anyActiveTracked: true iff some element still remaining>0", function()
+    local els = TotemBar.TOTEM_ELEMENTS
+    local now = 100
+    H.assert_eq(TotemBar.anyActiveTracked({}, els, now, TotemBar.remaining), false, "empty -> false")
+    H.assert_eq(TotemBar.anyActiveTracked(nil, els, now, TotemBar.remaining), false, "nil -> false")
+    local expired = { Fire = { start = 0, duration = 50 } }    -- 0+50-100 = -50
+    H.assert_eq(TotemBar.anyActiveTracked(expired, els, now, TotemBar.remaining), false, "all expired -> false")
+    local active = { Water = { start = 90, duration = 30 } }   -- 90+30-100 = 20
+    H.assert_eq(TotemBar.anyActiveTracked(active, els, now, TotemBar.remaining), true, "one active -> true")
+end)
+
 H.summary()
