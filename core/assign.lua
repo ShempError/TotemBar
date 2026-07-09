@@ -88,3 +88,60 @@ function TotemBar.filterKnown(set, isKnown)
     end
     return applied, skipped
 end
+
+-- Current pending assignment: { set = {element=name,...}, label = string } or nil.
+-- In-memory only (not a SavedVariable) - an assignment is ephemeral coordination.
+TotemBar.pending = nil
+
+-- Optional hook, filled by an external assigner: called with the applied
+-- set table after the player accepts. Nil by default.
+TotemBar.onAssignmentApplied = nil
+
+-- THE SEAM. An external assigner calls this to propose a set. Validates,
+-- stores it as the pending suggestion (replacing any prior), and asks the
+-- UI to show the panel. Does NOT apply. Returns true, or false + reason.
+function TotemBar.ReceiveAssignment(set, label)
+    local ok, reason = TotemBar.validateAssignment(set)
+    if not ok then
+        return false, reason
+    end
+    TotemBar.pending = { set = TotemBar.copySet(set), label = label }
+    if TotemBar.ShowAssignPanel then
+        TotemBar.ShowAssignPanel()
+    end
+    return true
+end
+
+-- Drops any pending suggestion and hides the panel (decline / post-apply).
+function TotemBar.ClearAssignment()
+    TotemBar.pending = nil
+    if TotemBar.HideAssignPanel then
+        TotemBar.HideAssignPanel()
+    end
+end
+
+-- Applies the pending suggestion: sets each KNOWN totem as the chosen
+-- default for its element (unknown totems are skipped), refreshes the bar,
+-- clears pending, hides the panel, and fires onAssignmentApplied. No cast.
+function TotemBar.ApplyPending()
+    local p = TotemBar.pending
+    if not p then
+        return
+    end
+    local isKnown = TotemBar.isTotemKnown or function() return true end
+    local applied = TotemBar.filterKnown(p.set, isKnown)
+    TotemBarDB.chosen = TotemBarDB.chosen or {}
+    for element, name in pairs(applied) do
+        TotemBarDB.chosen[element] = name
+    end
+    if TotemBar.RefreshAll then
+        TotemBar.RefreshAll()
+    end
+    TotemBar.pending = nil
+    if TotemBar.HideAssignPanel then
+        TotemBar.HideAssignPanel()
+    end
+    if TotemBar.onAssignmentApplied then
+        TotemBar.onAssignmentApplied(applied)
+    end
+end

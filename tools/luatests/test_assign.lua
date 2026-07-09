@@ -69,4 +69,64 @@ H.run("filterKnown: splits by predicate", function()
     H.assert_eq(skipped.Fire, nil, "known not in skipped")
 end)
 
+H.run("ReceiveAssignment: stores pending + calls ShowAssignPanel", function()
+    TotemBar.pending = nil
+    local shown = false
+    TotemBar.ShowAssignPanel = function() shown = true end
+    local ok = TotemBar.ReceiveAssignment({ Fire = "Searing Totem" }, "TEST")
+    H.assert_eq(ok, true, "valid assignment accepted")
+    H.assert_eq(TotemBar.pending.set.Fire, "Searing Totem", "pending set stored")
+    H.assert_eq(TotemBar.pending.label, "TEST", "pending label stored")
+    H.assert_eq(shown, true, "ShowAssignPanel called")
+    TotemBar.ShowAssignPanel = nil
+end)
+
+H.run("ReceiveAssignment: rejects invalid, no pending set", function()
+    TotemBar.pending = nil
+    local ok = TotemBar.ReceiveAssignment({}, "x")
+    H.assert_eq(ok, false, "empty set rejected")
+    H.assert_eq(TotemBar.pending, nil, "no pending stored on reject")
+end)
+
+H.run("ClearAssignment: drops pending + calls HideAssignPanel", function()
+    TotemBar.pending = { set = { Fire = "Searing Totem" }, label = "x" }
+    local hidden = false
+    TotemBar.HideAssignPanel = function() hidden = true end
+    TotemBar.ClearAssignment()
+    H.assert_eq(TotemBar.pending, nil, "pending cleared")
+    H.assert_eq(hidden, true, "HideAssignPanel called")
+    TotemBar.HideAssignPanel = nil
+end)
+
+H.run("ApplyPending: writes known totems to chosen, skips unknown, clears", function()
+    TotemBarDB = { chosen = {} }
+    TotemBar.pending = {
+        set = { Fire = "Searing Totem", Air = "Windfury Totem" }, label = "TEST",
+    }
+    TotemBar.isTotemKnown = function(name) return name == "Searing Totem" end
+    local refreshed = false
+    TotemBar.RefreshAll = function() refreshed = true end
+    local appliedArg = nil
+    TotemBar.onAssignmentApplied = function(s) appliedArg = s end
+
+    TotemBar.ApplyPending()
+
+    H.assert_eq(TotemBarDB.chosen.Fire, "Searing Totem", "known totem applied")
+    H.assert_eq(TotemBarDB.chosen.Air, nil, "unknown totem skipped")
+    H.assert_eq(refreshed, true, "RefreshAll called")
+    H.assert_eq(appliedArg.Fire, "Searing Totem", "onAssignmentApplied got applied set")
+    H.assert_eq(TotemBar.pending, nil, "pending cleared after apply")
+
+    TotemBar.isTotemKnown = nil
+    TotemBar.RefreshAll = nil
+    TotemBar.onAssignmentApplied = nil
+    TotemBarDB = nil
+end)
+
+H.run("ApplyPending: no-op when nothing pending", function()
+    TotemBar.pending = nil
+    TotemBar.ApplyPending()   -- must not error
+    H.assert_eq(TotemBar.pending, nil, "still nil")
+end)
+
 H.summary()
