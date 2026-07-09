@@ -76,6 +76,7 @@ local HideFlyout
 local OnFlyoutUpdate
 local CreateElementButton
 local CreateRecallButton
+local CreateDropSetButton
 local RefreshRecallIndicator
 local OnRecallUpdate
 local UpdateTimerDisplays
@@ -701,6 +702,47 @@ CreateRecallButton = function(index)
     return btn
 end
 
+-- The "drop set" button: one click casts all four chosen totems
+-- (TotemBar.recallAndCastAll, with its 2s double-press guard). Placed after
+-- the Recall button.
+CreateDropSetButton = function(index)
+    local name = "TotemBarButtonDropSet"
+    local btn = CreateFrame("Button", name, TotemBarFrame)
+    btn:SetWidth(BUTTON_SIZE)
+    btn:SetHeight(BUTTON_SIZE)
+    btn:SetPoint("LEFT", TotemBarFrame, "LEFT", (index - 1) * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP, 0)
+    btn:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    btn:SetBackdropColor(0, 0, 0, 1)
+
+    local icon = btn:CreateTexture(name .. "Icon", "ARTWORK")
+    icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 3, -3)
+    icon:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -3, 3)
+    icon:SetTexture("Interface\\Icons\\Spell_Nature_TremorTotem")
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    btn.icon = icon
+
+    btn:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+    btn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    btn:RegisterForClicks("LeftButtonUp")
+    btn:SetScript("OnClick", function()
+        TotemBar.recallAndCastAll()
+    end)
+    btn:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_TOP")
+        GameTooltip:SetText("Drop all totems")
+        GameTooltip:AddLine("Left-click: cast your whole set", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    return btn
+end
+
 -- Refreshes every element button's remaining-duration timer text.
 -- HYBRID source: prefers pfUI libtotem's GetTotemInfo(slot) when
 -- present and reporting the slot active (also catches totems cast
@@ -975,7 +1017,7 @@ function TotemBar.BuildUI()
     end
 
     local numElements = table.getn(TotemBar.TOTEM_ELEMENTS)
-    local totalButtons = numElements + 1 -- + Totemic Recall, to the right of Air
+    local totalButtons = numElements + 2 -- + Totemic Recall + Drop Set, to the right of Air
     -- No per-button labels anymore (hover tooltip names the element/
     -- totem instead), so the bar is just the button row plus a
     -- symmetric BUTTON_GAP margin on every side.
@@ -1008,7 +1050,8 @@ function TotemBar.BuildUI()
         CreateElementButton(element, i)
         RefreshCooldown(element)   -- initial swipe state for whatever's already chosen
     end
-    CreateRecallButton(totalButtons)
+    CreateRecallButton(numElements + 1)
+    CreateDropSetButton(numElements + 2)
 
     frame:SetScript("OnUpdate", OnBarUpdate)
 
