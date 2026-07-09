@@ -1261,8 +1261,10 @@ local function HandleSlashCommand(msg)
         TotemBar.ToggleOptions()
     elseif cmd == "bind" then
         if TotemBar.ToggleBindMode then TotemBar.ToggleBindMode() end
+    elseif cmd == "manadump" then
+        if TotemBar.dumpManaScan then TotemBar.dumpManaScan() end
     else
-        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options, /tb bind")
+        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options, /tb bind, /tb manadump")
     end
 end
 

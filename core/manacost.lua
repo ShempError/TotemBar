@@ -107,16 +107,31 @@ end
 
 -- ===== WoW-API layer (not offline-executed) =====
 
--- Own spellbook-slot finder (ui.lua's FindSpellIndexByName is file-local).
-local function findSpellSlot(name)
+-- Resolves the spellbook slot of the HIGHEST known rank of `name`. This is
+-- the rank CastSpellByName actually casts, so the scanned mana cost matches
+-- what the player pays. A first-match scan returns rank 1 -> cost far too low
+-- (the bug behind "the mana values are wrong"). Mirrors known.lua's
+-- highestKnownRank: parse the rank number and keep the max; fall back to the
+-- last matching slot (ranks are listed ascending) if no rank number parses.
+local function findHighestRankSlot(name)
     if not name then return nil end
+    local bestSlot, bestRank, lastSlot = nil, nil, nil
     local i = 1
     while true do
-        local n = GetSpellName(i, BOOKTYPE_SPELL)
-        if not n then return nil end
-        if n == name then return i end
+        local n, rankStr = GetSpellName(i, BOOKTYPE_SPELL)
+        if not n then break end
+        if n == name then
+            lastSlot = i
+            local _, _, numStr = string.find(rankStr or "", "(%d+)")
+            local num = numStr and tonumber(numStr)
+            if num and (not bestRank or num > bestRank) then
+                bestRank = num
+                bestSlot = i
+            end
+        end
         i = i + 1
     end
+    return bestSlot or lastSlot
 end
 
 local scanTip = nil
@@ -128,7 +143,7 @@ local manaCache = {}   -- name -> cost (only positive results cached)
 function TotemBar.getTotemManaCost(name)
     if not name then return nil end
     if manaCache[name] then return manaCache[name] end
-    local idx = findSpellSlot(name)
+    local idx = findHighestRankSlot(name)
     if not idx then return nil end
     if not scanTip then
         scanTip = CreateFrame("GameTooltip", "TotemBarScanTooltip", nil, "GameTooltipTemplate")
@@ -149,6 +164,64 @@ function TotemBar.getTotemManaCost(name)
     end
     if cost then manaCache[name] = cost end
     return cost
+end
+
+-- Dev aid (/tb manadump): dump the RAW mana-cost scan for the chosen totems +
+-- Totemic Recall to C:\turtle\imports\totembar_manadump.txt, so the resolved
+-- slot/rank, every tooltip line, and the parsed cost can be verified
+-- off-client (ground truth for the mana-cost feature). Chat fallback if no
+-- SuperWoW ExportFile.
+function TotemBar.dumpManaScan()
+    local els = TotemBar.TOTEM_ELEMENTS
+    local chosen = (TotemBarDB and TotemBarDB.chosen) or {}
+    local list = {}
+    for i = 1, table.getn(els) do
+        local nm = chosen[els[i]]
+        if nm then list[table.getn(list) + 1] = nm end
+    end
+    list[table.getn(list) + 1] = "Totemic Recall"
+    if not scanTip then
+        scanTip = CreateFrame("GameTooltip", "TotemBarScanTooltip", nil, "GameTooltipTemplate")
+    end
+    local out = "TotemBar mana scan dump\n"
+    local total = 0
+    for i = 1, table.getn(list) do
+        local nm = list[i]
+        local idx = findHighestRankSlot(nm)
+        out = out .. "\n[" .. nm .. "] slot=" .. tostring(idx)
+        if idx then
+            local rn, rr = GetSpellName(idx, BOOKTYPE_SPELL)
+            out = out .. " resolved='" .. tostring(rn) .. "' rank='" .. tostring(rr) .. "'\n"
+            scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+            scanTip:ClearLines()
+            scanTip:SetSpell(idx, BOOKTYPE_SPELL)
+            local lines = scanTip:NumLines() or 0
+            local cost = nil
+            for L = 1, lines do
+                local fs = getglobal("TotemBarScanTooltipTextLeft" .. L)
+                local text = fs and fs:GetText()
+                out = out .. "   L" .. L .. ": " .. tostring(text) .. "\n"
+                if not cost then
+                    local c = TotemBar.parseManaCost(text)
+                    if c then cost = c end
+                end
+            end
+            out = out .. "   parsedCost=" .. tostring(cost) .. "\n"
+            if cost and nm ~= "Totemic Recall" then total = total + cost end
+        else
+            out = out .. " (not found in spellbook)\n"
+        end
+    end
+    out = out .. "\nsumChosenCost(live)=" .. tostring(
+        TotemBar.sumChosenCost(chosen, els, TotemBar.getTotemManaCost)) .. "\n"
+    out = out .. "dumpTotal(chosen)=" .. total .. "\n"
+    if ExportFile then
+        ExportFile("totembar_manadump", out)
+    end
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(
+            "TotemBar: mana dump written (imports\\totembar_manadump.txt). chosen sum=" .. total)
+    end
 end
 
 -- Totemic Mastery (TWoW: +20% helpful-totem duration): cached scan of the
