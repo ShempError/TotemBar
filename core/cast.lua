@@ -157,7 +157,10 @@ function TotemBar.recordCast(element, totemName)
     end
     local rec = {
         start = GetTime(),
-        duration = TotemBar.totemDuration(totemName, highestRank),
+        duration = TotemBar.durationWithMastery(
+            TotemBar.totemDuration(totemName, highestRank),
+            TotemBar.isHelpfulTotem(totemName),
+            TotemBar.hasTotemicMastery and TotemBar.hasTotemicMastery()),
         totemName = totemName,
         icon = icon,
         everHadBuff = false,
