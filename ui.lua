@@ -1036,8 +1036,23 @@ local function HandleSlashCommand(msg)
         end
     elseif cmd == "scan" then
         TotemBar.PrintScan()
+    elseif cmd == "assign" then
+        -- Dev aid: inject a sample assignment to exercise the pending panel
+        -- + accept/decline flow end-to-end without any transport.
+        local sample = {
+            Fire  = "Searing Totem",
+            Earth = "Strength of Earth Totem",
+            Water = "Mana Spring Totem",
+            Air   = "Grace of Air Totem",
+        }
+        local ok, reason = TotemBar.ReceiveAssignment(sample, "TEST assignment")
+        if ok then
+            ChatOut:AddMessage("TotemBar: injected TEST assignment (click OK on the panel to apply).")
+        else
+            ChatOut:AddMessage("TotemBar: assign failed - " .. tostring(reason))
+        end
     else
-        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan")
+        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign")
     end
 end
 
