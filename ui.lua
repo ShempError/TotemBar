@@ -239,7 +239,7 @@ TotemBar.refreshBindOverlays = function()
             local cmd = t.action()
             local key = cmd and GetBindingKey(cmd) or nil
             if key then
-                fs:SetText(GetBindingText(key, "KEY_", 1))
+                fs:SetText(TotemBar.shortenKey(key))
             else
                 fs:SetText("")
             end
@@ -632,7 +632,7 @@ CreateElementButton = function(element, index)
     end)
 
     elementButtons[element] = btn
-    registerBindOverlay(btn, function() return "CLICK " .. "TotemBarButton" .. element .. ":LeftButton" end)
+    registerBindOverlay(btn, function() return "TOTEMBAR_CAST_" .. string.upper(element) end)
     return btn
 end
 
@@ -762,7 +762,7 @@ CreateRecallButton = function(index)
 
     recallButton = btn
     RefreshRecallIndicator()
-    registerBindOverlay(btn, function() return "CLICK TotemBarButtonRecall:LeftButton" end)
+    registerBindOverlay(btn, function() return "TOTEMBAR_RECALL" end)
 
     return btn
 end
@@ -805,7 +805,7 @@ CreateDropSetButton = function(index)
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    registerBindOverlay(btn, function() return "CLICK TotemBarButtonDropSet:LeftButton" end)
+    registerBindOverlay(btn, function() return "TOTEMBAR_DROPSET" end)
     return btn
 end
 

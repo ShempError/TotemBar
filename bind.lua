@@ -107,8 +107,8 @@ local function ensureCaptureFrame()
     f:SetFrameStrata("FULLSCREEN_DIALOG")
     f:EnableKeyboard(false)
     f:Hide()
-    f:SetScript("OnKeyDown", function()
-        local key = arg1   -- NOTE: OnKeyDown arg1 = key name string (verify in-game)
+    f:SetScript("OnKeyUp", function()
+        local key = arg1   -- NOTE: OnKeyUp arg1 = key name string (matches pfUI's hoverbind capture)
         if not key or BARE_MODIFIERS[key] then
             return
         end
