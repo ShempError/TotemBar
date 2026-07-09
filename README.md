@@ -8,15 +8,11 @@ macro press. No dependencies required — TotemBar looks and works fine on
 its own, and automatically adopts the [pfUI](https://github.com/shagu/pfUI)
 look (fonts, skinned buttons/sliders) when pfUI is installed.
 
-## Screenshots
+## Changelog
 
-![The totem bar, with the Totemic Recall button and its tooltip](screenshots/bar.png)
+Latest release: **v0.1.2**. Full history in **[CHANGELOG.md](CHANGELOG.md)**.
 
-![Hover an element button for a flyout of your other totems, with the real in-game spell tooltip](screenshots/flyout.png)
-
-![The Esc → Key Bindings menu, with the TotemBar section](screenshots/keybindings.png)
-
-![Hover-bind mode: the on-screen prompt, the options panel, and per-button key labels on the bar](screenshots/bind-mode.png)
+📸 **Screenshots** live on the **[Screenshots wiki page](https://github.com/ShempError/TotemBar/wiki/Screenshots)**.
 
 ## Features
 
@@ -183,10 +179,6 @@ they depend on the live client.
 - `/reload` is enough for changes to existing `.lua`/`.xml` files.
 - A full client restart is needed if `.toc` entries change or files are
   added/removed/renamed.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
