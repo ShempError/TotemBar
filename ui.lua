@@ -82,6 +82,8 @@ local UpdateTimerDisplays
 local OnBarUpdate
 local OnDragStart
 local OnDragStop
+local EnsureAssignFrame
+local assignFrame        -- lazily created pending-suggestion panel
 
 -- Finds the spellbook index of a known spell by exact name, or nil.
 local function FindSpellIndexByName(name)
@@ -115,6 +117,21 @@ local function GetElementIcon(element)
     end
     local texture = GetSpellTexture(idx, BOOKTYPE_SPELL)
     return texture or EMPTY_ICON
+end
+
+-- Resolves (iconTexture, known) for an arbitrary totem name: the spellbook
+-- texture when the player knows it, else the empty/question-mark icon and
+-- known=false (the pending panel greys unknown totems).
+local function ResolveTotemIcon(name)
+    if not name then
+        return EMPTY_ICON, false
+    end
+    local idx = FindSpellIndexByName(name)
+    if not idx then
+        return EMPTY_ICON, false
+    end
+    local texture = GetSpellTexture(idx, BOOKTYPE_SPELL)
+    return texture or EMPTY_ICON, true
 end
 
 -- Resolves the Totemic Recall icon by scanning the spellbook for the
@@ -819,6 +836,118 @@ OnDragStop = function()
     TotemBarDB.relPoint = relPoint
     TotemBarDB.x = x
     TotemBarDB.y = y
+end
+
+-- Lazily builds the pending-suggestion panel: a heading label, a row of up
+-- to 4 element-ordered totem icons, an Accept button, and a close "X".
+-- Built once, reused; event-driven show/hide (no OnUpdate, no per-frame
+-- allocation). Anchored above the bar.
+EnsureAssignFrame = function()
+    if assignFrame then
+        return assignFrame
+    end
+
+    local f = CreateFrame("Frame", "TotemBarAssignFrame", UIParent)
+    f:SetFrameStrata("DIALOG")
+    f:SetWidth(4 * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP + 40)
+    f:SetHeight(BUTTON_SIZE + 34)
+    f:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0, 0, 0, 0.85)
+    f:SetClampedToScreen(true)
+    f:ClearAllPoints()
+    f:SetPoint("BOTTOM", TotemBarFrame, "TOP", 0, 6)
+
+    local heading = f:CreateFontString("TotemBarAssignHeading", "OVERLAY")
+    heading:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+    heading:SetPoint("TOP", f, "TOP", 0, -6)
+    heading:SetText("Assigned set")
+    f.heading = heading
+
+    f.icons = {}
+    for i = 1, 4 do
+        local ico = f:CreateTexture("TotemBarAssignIcon" .. i, "ARTWORK")
+        ico:SetWidth(BUTTON_SIZE)
+        ico:SetHeight(BUTTON_SIZE)
+        ico:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT",
+            BUTTON_GAP + (i - 1) * (BUTTON_SIZE + BUTTON_GAP), 6)
+        ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        f.icons[i] = ico
+    end
+
+    local accept = CreateFrame("Button", "TotemBarAssignAccept", f, "UIPanelButtonTemplate")
+    accept:SetWidth(28)
+    accept:SetHeight(BUTTON_SIZE)
+    accept:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+    accept:SetText("OK")
+    accept:SetScript("OnClick", function()
+        TotemBar.ApplyPending()
+    end)
+    accept:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Apply assigned set")
+        GameTooltip:AddLine("Sets these as your chosen totems (no cast).", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    accept:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    f.accept = accept
+
+    local close = CreateFrame("Button", "TotemBarAssignClose", f, "UIPanelCloseButton")
+    close:SetWidth(22)
+    close:SetHeight(22)
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -2, -2)
+    close:SetScript("OnClick", function()
+        TotemBar.ClearAssignment()
+    end)
+    f.close = close
+
+    f:Hide()
+    assignFrame = f
+    return f
+end
+
+-- Populates and shows the panel from TotemBar.pending. Unknown totems are
+-- greyed (desaturated + dimmed). Called by ReceiveAssignment via the hook.
+TotemBar.ShowAssignPanel = function()
+    local p = TotemBar.pending
+    if not p then
+        return
+    end
+    local f = EnsureAssignFrame()
+    f.heading:SetText(p.label or "Assigned set")
+
+    local elements = TotemBar.TOTEM_ELEMENTS
+    for i = 1, 4 do
+        local element = elements[i]
+        local name = element and p.set[element]
+        local ico = f.icons[i]
+        if name then
+            local tex, known = ResolveTotemIcon(name)
+            ico:SetTexture(tex)
+            if known then
+                ico:SetVertexColor(1, 1, 1)
+                ico:SetAlpha(1)
+            else
+                ico:SetVertexColor(0.5, 0.5, 0.5)
+                ico:SetAlpha(0.5)
+            end
+            ico:Show()
+        else
+            ico:Hide()
+        end
+    end
+    f:Show()
+end
+
+-- Hides the panel (called by ClearAssignment / ApplyPending via the hook).
+TotemBar.HideAssignPanel = function()
+    if assignFrame then
+        assignFrame:Hide()
+    end
 end
 
 function TotemBar.BuildUI()
