@@ -34,6 +34,9 @@ local function CreateCheckbox(parent, label, getter, setter)
     cb:SetScript("OnClick", function()
         this.tbSet(this:GetChecked() == 1)
     end)
+    if pfUI and pfUI.api and pfUI.api.SkinCheckbox then
+        pfUI.api.SkinCheckbox(cb)
+    end
     return cb
 end
 
@@ -63,6 +66,9 @@ local function CreateSlider(parent, label, minVal, maxVal, step, fmt, getter, se
         end
         this.tbSet(v)
     end)
+    if pfUI and pfUI.api and pfUI.api.SkinSlider then
+        pfUI.api.SkinSlider(sl)
+    end
     return sl
 end
 
@@ -74,6 +80,9 @@ local function CreateButton(parent, name, label, onClick)
     btn:SetHeight(22)
     btn:SetText(label)
     btn:SetScript("OnClick", onClick)
+    if pfUI and pfUI.api and pfUI.api.SkinButton then
+        pfUI.api.SkinButton(btn)
+    end
     return btn
 end
 
@@ -96,6 +105,12 @@ local function BuildOptionsFrame()
         tile = true, tileSize = 32, edgeSize = 32,
         insets = { left = 11, right = 12, top = 12, bottom = 11 },
     })
+    -- pfUI look: swap the Blizzard dialog backdrop for pfUI's dark panel +
+    -- 1px border. Falls back to the Blizzard backdrop above if pfUI absent.
+    if pfUI and pfUI.api and pfUI.api.CreateBackdrop then
+        f:SetBackdrop(nil)
+        pfUI.api.CreateBackdrop(f, nil, true)
+    end
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
@@ -106,9 +121,16 @@ local function BuildOptionsFrame()
     local title = f:CreateFontString("TotemBarOptionsTitle", "OVERLAY", "GameFontNormal")
     title:SetPoint("TOP", f, "TOP", 0, -16)
     title:SetText("TotemBar Options")
+    if pfUI and pfUI.font_default then
+        local fs = (pfUI_config and pfUI_config.global and pfUI_config.global.font_size) or 12
+        title:SetFont(pfUI.font_default, fs)
+    end
 
     local close = CreateFrame("Button", "TotemBarOptionsClose", f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
+    if pfUI and pfUI.api and pfUI.api.SkinCloseButton then
+        pfUI.api.SkinCloseButton(close, f)
+    end
 
     -- Layout cursor.
     local x = 24
