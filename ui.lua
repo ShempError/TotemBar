@@ -584,6 +584,10 @@ RefreshRecallIndicator = function()
     end
 end
 
+-- Public alias so options.lua can refresh the "A" auto-recall indicator
+-- after the auto-recall checkbox is toggled.
+TotemBar.RefreshRecallIndicator = RefreshRecallIndicator
+
 -- Pulses the Recall button's icon alpha while anyOutOfRange is true (set
 -- by UpdateTimerDisplays) - a "go recall + redeploy" visual prompt.
 -- Time-based (GetTime()), so the pulse stays smooth regardless of frame
@@ -983,6 +987,7 @@ function TotemBar.BuildUI()
         insets = { left = 4, right = 4, top = 4, bottom = 4 },
     })
     frame:SetBackdropColor(0, 0, 0, 0.5)
+    frame:SetScale(TotemBarDB.scale or 1.0)
 
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -1003,6 +1008,38 @@ function TotemBar.BuildUI()
     frame:SetScript("OnUpdate", OnBarUpdate)
 
     frame:Show()
+    if TotemBarDB.hidden then
+        frame:Hide()
+    end
+end
+
+-- Shows/hides the bar and persists the choice (TotemBarDB.hidden). Driven
+-- by the options panel's "Show bar" checkbox, the minimap right-click, and
+-- the bare /tb command.
+function TotemBar.ToggleBar()
+    if not TotemBarFrame then
+        return
+    end
+    if TotemBarFrame:IsShown() then
+        TotemBarFrame:Hide()
+        TotemBarDB.hidden = true
+    else
+        TotemBarFrame:Show()
+        TotemBarDB.hidden = false
+    end
+end
+
+-- Resets the bar's saved anchor to centered defaults and re-anchors it.
+-- Does NOT change scale. Driven by the options panel's "Reset position".
+function TotemBar.ResetPosition()
+    TotemBarDB.point = "CENTER"
+    TotemBarDB.relPoint = "CENTER"
+    TotemBarDB.x = 0
+    TotemBarDB.y = 0
+    if TotemBarFrame then
+        TotemBarFrame:ClearAllPoints()
+        TotemBarFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
 end
 
 -- "/tb scan" dev-aid: one-shot print of every spellbook entry that looks
@@ -1032,11 +1069,7 @@ end
 local function HandleSlashCommand(msg)
     local cmd = string.lower(msg or "")
     if cmd == "" then
-        if TotemBarFrame:IsShown() then
-            TotemBarFrame:Hide()
-        else
-            TotemBarFrame:Show()
-        end
+        TotemBar.ToggleBar()
     elseif cmd == "lock" then
         TotemBarDB.locked = not TotemBarDB.locked
         if TotemBarDB.locked then

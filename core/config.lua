@@ -28,4 +28,10 @@ function TotemBar.ensureDefaults()
     TotemBarDB.relPoint = TotemBarDB.relPoint or "CENTER"
     TotemBarDB.x = TotemBarDB.x or 0
     TotemBarDB.y = TotemBarDB.y or 0
+    TotemBarDB.scale = TotemBarDB.scale or 1.0
+    TotemBarDB.minimapAngle = TotemBarDB.minimapAngle or 225
+    if TotemBarDB.hidden == nil then
+        TotemBarDB.hidden = false
+    end
+    TotemBarDB.recallGuardSeconds = TotemBarDB.recallGuardSeconds or TotemBar.DEFAULT_RECALL_GUARD
 end
