@@ -51,14 +51,28 @@ look (fonts, skinned buttons/sliders) when pfUI is installed.
 
 ## Install
 
+**Option A — download (simplest):**
+
 1. Download **`TotemBar-vX.Y.Z.zip`** from the
    [**Releases**](https://github.com/ShempError/TotemBar/releases) page.
    *(Use the Release zip, not the green "Code → Download ZIP" — that one
    names the folder `TotemBar-master`, which WoW won't load.)*
 2. Extract it and drop the resulting **`TotemBar`** folder straight into your
    `Interface\AddOns\` directory — no renaming needed.
-3. Restart the client (or `/reload` if you're just updating files that
-   already exist on disk — see [Notes](#notes) below).
+3. Restart the client.
+
+**Option B — via git (auto-updatable):** clone into your AddOns folder so an
+addon manager can keep it current with a `git pull`:
+
+```
+cd Interface/AddOns
+git clone https://github.com/ShempError/TotemBar.git TotemBar
+```
+
+The `master` branch is the stable release channel — git-based managers such as
+[GitAddonsManager](https://github.com/AcidWeb/GitAddonsManager) or the OctoWoW
+launcher's built-in addon management update from it with a `git pull`. (`dev`
+is work-in-progress; track `master` for stable.)
 
 No dependencies required.
 
@@ -135,6 +149,11 @@ Open with the minimap button's left-click or `/tb options`.
   `/tb scan` just prints to chat. Not needed for any normal feature.
 
 ## For developers
+
+**Integrating another addon?** TotemBar exposes a small public API so a
+companion addon (e.g. a raid totem-assignment tool) can push totem sets to
+it — see **[`docs/API.md`](docs/API.md)** for the interface reference and an
+example.
 
 Pure-logic modules under `core/` (cast-cycle math, config defaults, buff
 matching, assignment validation, etc.) are unit-tested offline against a
