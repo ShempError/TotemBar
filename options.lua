@@ -25,6 +25,28 @@ local function ApplyFont(fontString, size)
     end
 end
 
+-- Adds a wrapped explanatory GameTooltip on hover. Chains any existing
+-- OnEnter/OnLeave (e.g. pfUI's SkinButton hover-highlight) instead of
+-- replacing it, so skinning still works. No HookScript on 1.12.
+local function AddTooltip(widget, text)
+    if not widget or not text then
+        return
+    end
+    widget.tbTip = text
+    local oldEnter = widget:GetScript("OnEnter")
+    local oldLeave = widget:GetScript("OnLeave")
+    widget:SetScript("OnEnter", function()
+        if oldEnter then oldEnter() end
+        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+        GameTooltip:SetText(this.tbTip, 1, 1, 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    widget:SetScript("OnLeave", function()
+        if oldLeave then oldLeave() end
+        GameTooltip:Hide()
+    end)
+end
+
 -- Unique widget-name counters (template child labels resolve via getglobal,
 -- so every widget needs a non-nil, unique frame name).
 local cbIndex = 0
@@ -164,6 +186,7 @@ local function BuildOptionsFrame()
         function() return TotemBarDB.locked end,
         function(v) TotemBarDB.locked = v end)
     place(widgets.lock, -28)
+    AddTooltip(widgets.lock, "Locks the bar in place so you can't drag it by accident. Uncheck to reposition it.")
 
     widgets.autoRecall = CreateCheckbox(f, "Auto-recall before setting",
         function() return TotemBarDB.autoRecall end,
@@ -172,6 +195,7 @@ local function BuildOptionsFrame()
             if TotemBar.RefreshRecallIndicator then TotemBar.RefreshRecallIndicator() end
         end)
     place(widgets.autoRecall, -28)
+    AddTooltip(widgets.autoRecall, "When on, the Totems macro casts Totemic Recall before re-dropping your totems (refunds some mana when relocating).")
 
     widgets.show = CreateCheckbox(f, "Show bar",
         function() return not TotemBarDB.hidden end,
@@ -185,17 +209,20 @@ local function BuildOptionsFrame()
             end
         end)
     place(widgets.show, -40)
+    AddTooltip(widgets.show, "Shows or hides the totem bar. The choice is remembered between sessions.")
 
     -- Sliders (leave headroom below each for its low/high/value text).
     widgets.guard = CreateSlider(f, "Recall guard (sec)", 0, 5, 0.5, "Recall guard: %.1fs",
         function() return TotemBarDB.recallGuardSeconds end,
         function(v) TotemBarDB.recallGuardSeconds = v end)
     place(widgets.guard, -44)
+    AddTooltip(widgets.guard, "A second press of the Totems macro within this many seconds skips Totemic Recall, so a double-press won't pull the totems you just dropped. 0 = no guard.")
 
     widgets.gap = CreateSlider(f, "Cycle reset gap (sec)", 0.5, 5, 0.5, "Cycle gap: %.1fs",
         function() return TotemBarDB.gapSeconds end,
         function(v) TotemBarDB.gapSeconds = v end)
     place(widgets.gap, -44)
+    AddTooltip(widgets.gap, "How long a pause (in seconds) restarts the one-per-press cast cycle back at the first totem.")
 
     widgets.scale = CreateSlider(f, "UI size", 0.5, 2.0, 0.05, "UI size: %.2f",
         function() return TotemBarDB.scale end,
@@ -208,6 +235,7 @@ local function BuildOptionsFrame()
             end
         end)
     place(widgets.scale, -44)
+    AddTooltip(widgets.scale, "Scales the whole bar. It stays anchored at its top-left corner, and the flyout scales with it.")
 
     optionsFrame = f
     -- Buttons (Reset position, Create macro) are added in Task 4.
@@ -276,12 +304,14 @@ function TotemBar.BuildOptionsButtons(f, x, yStart)
     end)
     reset:SetWidth(w)
     reset:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart)
+    AddTooltip(reset, "Moves the bar back to the center of the screen.")
 
     local macro = CreateButton(f, "TotemBarOptMacroButton", "Create 'Totems' macro", function()
         ApplyTotemsMacro()
     end)
     macro:SetWidth(w)
     macro:SetPoint("TOPLEFT", f, "TOPLEFT", x, yStart - 28)
+    AddTooltip(macro, "Creates or updates a 'Totems' macro that drops all four chosen totems in one press. Drag it from the macro window to your action bar.")
 end
 
 -- Show/hide the options panel (builds it lazily). Left-click on the minimap
