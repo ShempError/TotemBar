@@ -133,6 +133,9 @@ local function findHighestRankSlot(name)
     end
     return bestSlot or lastSlot
 end
+-- Shared: ui.lua's tooltips resolve through this too - SetSpell with a
+-- first-name-match slot shows the RANK 1 tooltip (wrong mana/duration).
+TotemBar.findHighestRankSlot = findHighestRankSlot
 
 local scanTip = nil
 local manaCache = {}   -- name -> cost (only positive results cached)

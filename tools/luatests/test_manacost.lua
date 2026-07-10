@@ -71,4 +71,33 @@ H.run("isHelpfulTotem: damage totems excluded", function()
     H.assert_eq(TotemBar.isHelpfulTotem(nil), false, "nil")
 end)
 
+
+
+H.run("findHighestRankSlot: exported + picks highest rank, not first match", function()
+    H.assert_eq(type(TotemBar.findHighestRankSlot), "function", "export exists (tooltips reuse it)")
+    -- Stub spellbook: Searing ranks 1/2/6 at slots 3/4/9, first match = slot 3.
+    local book = {
+        [1] = { "Healing Wave", "Rank 1" },
+        [2] = { "Stoneskin Totem", "Rank 1" },
+        [3] = { "Searing Totem", "Rank 1" },
+        [4] = { "Searing Totem", "Rank 2" },
+        [5] = { "Healing Wave", "Rank 3" },
+        [9] = { "Searing Totem", "Rank 6" },
+    }
+    GetSpellName = function(i, bt)
+        local e = book[i]
+        if not e then
+            if i <= 9 then return "Filler", "" end
+            return nil
+        end
+        return e[1], e[2]
+    end
+    BOOKTYPE_SPELL = "spell"
+    H.assert_eq(TotemBar.findHighestRankSlot("Searing Totem"), 9, "highest rank slot 9, not first hit 3")
+    H.assert_eq(TotemBar.findHighestRankSlot("Stoneskin Totem"), 2, "single rank -> its slot")
+    H.assert_eq(TotemBar.findHighestRankSlot("Nope"), nil, "unknown -> nil")
+    GetSpellName = nil
+    BOOKTYPE_SPELL = nil
+end)
+
 H.summary()

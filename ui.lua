@@ -218,6 +218,25 @@ local function FindSpellIndexByName(name)
     end
 end
 
+-- Fills a tooltip with a totem spell, resolved to the HIGHEST known rank.
+-- A first-name-match slot (FindSpellIndexByName) is RANK 1, so SetSpell on
+-- it showed rank-1 mana/damage/duration - misleading, since the name-based
+-- CAST always uses the highest rank. Also appends the rank to the name
+-- line, which 1.12's SetSpell omits entirely.
+local function SetSpellTooltip(tip, name)
+    local idx = (TotemBar.findHighestRankSlot and TotemBar.findHighestRankSlot(name))
+        or FindSpellIndexByName(name)
+    if not idx then
+        tip:SetText(name)
+        return
+    end
+    tip:SetSpell(idx, BOOKTYPE_SPELL)
+    local _, rank = GetSpellName(idx, BOOKTYPE_SPELL)
+    if rank and rank ~= "" then
+        tip:AppendText(" |cffa8a8a8(" .. rank .. ")|r")
+    end
+end
+
 -- Resolves the icon texture path for whatever totem is currently chosen
 -- for `element`, or nil when the slot is empty/unresolved. Callers route
 -- the result through SetElementIcon, which draws the sheet's per-element
@@ -536,12 +555,7 @@ EnsureFlyoutFrame = function()
         ico:SetScript("OnEnter", function()
             if this.totemName then
                 GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
-                local idx = FindSpellIndexByName(this.totemName)
-                if idx then
-                    GameTooltip:SetSpell(idx, BOOKTYPE_SPELL)
-                else
-                    GameTooltip:SetText(this.totemName)
-                end
+                SetSpellTooltip(GameTooltip, this.totemName)
                 GameTooltip:AddLine("Left-click: cast  /  Right-click: set default", 1, 1, 1)
                 GameTooltip:Show()
             end
@@ -952,12 +966,7 @@ CreateElementButton = function(element, index)
         local totemName = db and db.chosen and db.chosen[this.element]
         GameTooltip:SetOwner(this, "ANCHOR_TOP")
         if totemName then
-            local idx = FindSpellIndexByName(totemName)
-            if idx then
-                GameTooltip:SetSpell(idx, BOOKTYPE_SPELL)
-            else
-                GameTooltip:SetText(totemName)
-            end
+            SetSpellTooltip(GameTooltip, totemName)
             GameTooltip:AddLine("Left-click: cast  /  Right-click: clear", 1, 1, 1)
         else
             GameTooltip:SetText(this.element .. " (empty)")
