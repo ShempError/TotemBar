@@ -13,6 +13,12 @@ TotemBar.DEFAULT_GAP_SECONDS = 2
 -- cooldown and couldn't be re-placed).
 TotemBar.DEFAULT_RECALL_GUARD = 2
 
+-- Default gap (px) between bar buttons. Matches ui.lua's file-scope
+-- BUTTON_GAP default; the options panel's "Button spacing" slider (range
+-- 10-30px) live-applies changes via TotemBar.SetButtonGap (ui.lua) and
+-- persists them to TotemBarDB.buttonGap (core/config.lua).
+TotemBar.DEFAULT_BUTTON_GAP = 10
+
 -- Cycle state: which slot was cast last, and when.
 TotemBar.castState = TotemBar.castState or {
     index = 0,      -- 0 = no cast yet (or state was reset)

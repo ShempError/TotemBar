@@ -81,4 +81,33 @@ H.run("barDimensions: 3x2 - three rows, extra pitch 16", function()
     H.assert_eq(rows, 3, "3x2 rows")
 end)
 
+-- Button-spacing slider bounds (range 10-30px, see the options panel's
+-- "Button spacing" slider / ui.lua's SetButtonGap): pin the pixel math for
+-- both slider extremes across all three bar layouts, so a change to
+-- barDimensions can't silently break the spacing feature.
+H.run("barDimensions: button spacing 10px (slider min) across all layouts", function()
+    local w, h, rows = TotemBar.barDimensions(6, 6, 36, 10, 0)
+    H.assert_eq(w, 286, "1x6 width @10px"); H.assert_eq(h, 56, "1x6 height @10px"); H.assert_eq(rows, 1, "1x6 rows @10px")
+    w, h, rows = TotemBar.barDimensions(6, 3, 36, 10, 16)
+    H.assert_eq(w, 148, "2x3 width @10px"); H.assert_eq(h, 118, "2x3 height @10px"); H.assert_eq(rows, 2, "2x3 rows @10px")
+    w, h, rows = TotemBar.barDimensions(6, 2, 36, 10, 16)
+    H.assert_eq(w, 102, "3x2 width @10px"); H.assert_eq(h, 180, "3x2 height @10px"); H.assert_eq(rows, 3, "3x2 rows @10px")
+end)
+
+H.run("barDimensions: button spacing 30px (slider max) across all layouts", function()
+    local w, h, rows = TotemBar.barDimensions(6, 6, 36, 30, 0)
+    H.assert_eq(w, 426, "1x6 width @30px"); H.assert_eq(h, 96, "1x6 height @30px"); H.assert_eq(rows, 1, "1x6 rows @30px")
+    w, h, rows = TotemBar.barDimensions(6, 3, 36, 30, 16)
+    H.assert_eq(w, 228, "2x3 width @30px"); H.assert_eq(h, 178, "2x3 height @30px"); H.assert_eq(rows, 2, "2x3 rows @30px")
+    w, h, rows = TotemBar.barDimensions(6, 2, 36, 30, 16)
+    H.assert_eq(w, 162, "3x2 width @30px"); H.assert_eq(h, 260, "3x2 height @30px"); H.assert_eq(rows, 3, "3x2 rows @30px")
+end)
+
+H.run("clampValue: button-gap slider bounds (10..30)", function()
+    H.assert_eq(TotemBar.clampValue(9, 10, 30), 10, "9 -> 10 (below min)")
+    H.assert_eq(TotemBar.clampValue(31, 10, 30), 30, "31 -> 30 (above max)")
+    H.assert_eq(TotemBar.clampValue(10, 10, 30), 10, "10 -> 10 (at min)")
+    H.assert_eq(TotemBar.clampValue(30, 10, 30), 30, "30 -> 30 (at max)")
+end)
+
 H.summary()

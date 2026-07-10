@@ -159,13 +159,14 @@ local function BuildOptionsFrame()
 
     local f = CreateFrame("Frame", "TotemBarOptionsFrame", UIParent)
     f:SetWidth(280)
-    -- 472 + 44 + 28 + 28: room for the header emblem (+16, taller than the
-    -- old title-only header), two section dividers (+14 each), the "Show
-    -- pulse waves" checkbox row (+28, the pulse ring's countdown readout
-    -- sits alongside the ripple), and the bar-layout cycle button row (+28)
-    -- - see the layout-cursor deltas below (same mechanism as the Task-5
-    -- height bump).
-    f:SetHeight(556)
+    -- 472 + 44 + 28 + 28 + 44: room for the header emblem (+16, taller than
+    -- the old title-only header), two section dividers (+14 each), the
+    -- "Show pulse waves" checkbox row (+28, the pulse ring's countdown
+    -- readout sits alongside the ripple), the bar-layout cycle button row
+    -- (+28), and the "Button spacing" slider row (+44, same slider-row
+    -- height as guard/gap/scale above it) - see the layout-cursor deltas
+    -- below (same mechanism as the Task-5 height bump).
+    f:SetHeight(600)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     f:SetFrameStrata("DIALOG")
     -- Rev 4 UI chrome: shared bespoke panel skin (see ui.lua's PANEL_BACKDROP)
@@ -321,6 +322,18 @@ local function BuildOptionsFrame()
     place(widgets.scale, -44)
     AddTooltip(widgets.scale, "Scales the whole bar. It stays anchored at its top-left corner, and the flyout scales with it.")
 
+    widgets.buttonGap = CreateSlider(f, "Button spacing", 10, 30, 1, "Spacing: %.0fpx",
+        function() return TotemBarDB.buttonGap end,
+        function(v)
+            if TotemBar.SetButtonGap then
+                TotemBar.SetButtonGap(v)
+            else
+                TotemBarDB.buttonGap = v
+            end
+        end)
+    place(widgets.buttonGap, -44)
+    AddTooltip(widgets.buttonGap, "Distance between the bar buttons. Applies immediately.")
+
     -- Section divider (Rev 4 UI chrome): sliders above, action buttons below.
     CreateDivider(f, y)
     y = y - 14
@@ -344,6 +357,7 @@ local function BuildOptionsFrame()
         widgets.guard:SetValue(TotemBar.clampValue(TotemBarDB.recallGuardSeconds, 0, 5))
         widgets.gap:SetValue(TotemBar.clampValue(TotemBarDB.gapSeconds, 0.5, 5))
         widgets.scale:SetValue(TotemBar.clampValue(TotemBarDB.scale, 0.5, 2.0))
+        widgets.buttonGap:SetValue(TotemBar.clampValue(TotemBarDB.buttonGap, 10, 30))
     end)
 
     -- Version footer (bottom-centre), read from the .toc so it always matches

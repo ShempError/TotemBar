@@ -23,6 +23,10 @@ TotemBarDB = TotemBarDB or {}
 --   barLayout        = bar arrangement: "1x6"|"2x3"|"3x2" (rows x cols),
 --                       cycled via the options panel (see ui.lua's
 --                       ApplyBarLayout / options.lua's layout button).
+--   buttonGap        = px gap between bar buttons, range 10-30, default
+--                       TotemBar.DEFAULT_BUTTON_GAP (see core/cast.lua);
+--                       live-applied via ui.lua's TotemBar.SetButtonGap,
+--                       set from the options panel's "Button spacing" slider.
 function TotemBar.ensureDefaults()
     TotemBarDB.chosen = TotemBarDB.chosen or {}
     TotemBarDB.gapSeconds = TotemBarDB.gapSeconds or TotemBar.DEFAULT_GAP_SECONDS
@@ -43,6 +47,7 @@ function TotemBar.ensureDefaults()
     end
     TotemBarDB.recallGuardSeconds = TotemBarDB.recallGuardSeconds or TotemBar.DEFAULT_RECALL_GUARD
     TotemBarDB.recallRefundPct = TotemBarDB.recallRefundPct or 0.25
+    TotemBarDB.buttonGap = TotemBarDB.buttonGap or TotemBar.DEFAULT_BUTTON_GAP
 
     -- Pulse UI (spec docs/superpowers/specs/2026-07-09-pulse-ui-design.md):
     -- duration ring + pulse bars, all on by default; ringStyle "round" vs

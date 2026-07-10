@@ -6,6 +6,7 @@ dofile("tools/luatests/harness.lua")
 TotemBar = {}
 TotemBar.DEFAULT_GAP_SECONDS = 2
 TotemBar.DEFAULT_RECALL_GUARD = 2
+TotemBar.DEFAULT_BUTTON_GAP = 10
 dofile("core/config.lua")
 
 H.run("ensureDefaults: fills new fields on a fresh DB", function()
@@ -15,15 +16,17 @@ H.run("ensureDefaults: fills new fields on a fresh DB", function()
     H.assert_eq(TotemBarDB.minimapAngle, 225, "minimapAngle default 225")
     H.assert_eq(TotemBarDB.hidden, false, "hidden default false")
     H.assert_eq(TotemBarDB.recallGuardSeconds, 2, "recallGuardSeconds default 2")
+    H.assert_eq(TotemBarDB.buttonGap, 10, "buttonGap default 10")
 end)
 
 H.run("ensureDefaults: preserves existing values", function()
-    TotemBarDB = { scale = 1.5, minimapAngle = 40, hidden = true, recallGuardSeconds = 3 }
+    TotemBarDB = { scale = 1.5, minimapAngle = 40, hidden = true, recallGuardSeconds = 3, buttonGap = 22 }
     TotemBar.ensureDefaults()
     H.assert_eq(TotemBarDB.scale, 1.5, "scale preserved")
     H.assert_eq(TotemBarDB.minimapAngle, 40, "angle preserved")
     H.assert_eq(TotemBarDB.hidden, true, "hidden preserved")
     H.assert_eq(TotemBarDB.recallGuardSeconds, 3, "guard preserved")
+    H.assert_eq(TotemBarDB.buttonGap, 22, "buttonGap preserved")
 end)
 
 H.summary()

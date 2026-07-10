@@ -25,8 +25,14 @@ local BUTTON_SIZE = 36
 -- 10 (was 4): the 48px round ring frames overhang their 36px buttons by
 -- 6px per side; adjacent opaque ring bands (screen radius ~22.9px) need
 -- button centers >= ~45.8px apart to not overlap. 36+10 = 46 clears it,
--- for the bar row and the flyout column alike.
-local BUTTON_GAP = 10
+-- for the bar row and the flyout column alike. Now a live-adjustable
+-- UPVALUE (not a constant): the options panel's "Button spacing" slider
+-- (range 10-30px, TotemBarDB.buttonGap) reassigns this in place via
+-- TotemBar.SetButtonGap below - every closure that reads BUTTON_GAP
+-- (element/flyout/assign-panel positioning, ApplyBarLayout) sees the new
+-- value on its next read. 10px is still the floor: below that, adjacent
+-- ring bands start to overlap per the geometry above.
+local BUTTON_GAP = TotemBar.DEFAULT_BUTTON_GAP or 10
 
 -- Bar-layout grid (feature: selectable bar arrangement, TotemBarDB.barLayout,
 -- see ApplyBarLayout below). Maps each saved layout string to its column
@@ -422,6 +428,28 @@ local function ApplyRoundClickStates(btn, size)
     end
 end
 
+-- Repositions every pooled flyout icon per the current BUTTON_GAP (mirrors
+-- the bottom-up stacking math used when the icons are first built, below).
+-- The icon pool is built lazily ONCE and its anchors are baked in at that
+-- point - they don't reflow themselves - so this must be called again
+-- whenever BUTTON_GAP changes live (TotemBar.SetButtonGap), not just at
+-- build time. `frame` lets the build-time call pass the not-yet-assigned
+-- local `f` directly; later calls omit it and fall back to the flyoutFrame
+-- upvalue (guarded: a no-op if the flyout has never been built yet).
+local function layoutFlyoutIcons(frame)
+    local f = frame or flyoutFrame
+    if not f then
+        return
+    end
+    for i = 1, MAX_FLYOUT_ICONS do
+        local ico = flyoutIcons[i]
+        if ico then
+            ico:ClearAllPoints()
+            ico:SetPoint("BOTTOM", f, "BOTTOM", 0, FLYOUT_PAD + (i - 1) * (BUTTON_SIZE + BUTTON_GAP))
+        end
+    end
+end
+
 -- Lazily builds the single shared flyout frame plus its pool of icon
 -- buttons (TotemBarFlyoutIcon1..MAX_FLYOUT_ICONS), stacked bottom-up so
 -- ShowFlyout can just Show the first N. DIALOG strata so it draws above
@@ -459,8 +487,9 @@ EnsureFlyoutFrame = function()
         ico:SetHeight(BUTTON_SIZE)
         -- Bottom-up: icon 1 just inside the bottom padding, each next
         -- one a full button+gap higher (so nearest the element button
-        -- is first).
-        ico:SetPoint("BOTTOM", f, "BOTTOM", 0, FLYOUT_PAD + (i - 1) * (BUTTON_SIZE + BUTTON_GAP))
+        -- is first). Anchor applied below via layoutFlyoutIcons (once the
+        -- whole pool exists), not here - the same helper re-applies it
+        -- live when BUTTON_GAP changes.
 
         ico:SetBackdrop({
             bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -573,6 +602,11 @@ EnsureFlyoutFrame = function()
         end)
         flyoutIcons[i] = ico
     end
+
+    -- Anchors every pooled icon per BUTTON_GAP now that the whole pool
+    -- exists (flyoutFrame isn't assigned yet at this point in the function,
+    -- hence passing `f` explicitly - see layoutFlyoutIcons's own comment).
+    layoutFlyoutIcons(f)
 
     -- OnUpdate only fires while the frame is shown, so this hide-check
     -- naturally stops running once the flyout is hidden.
@@ -1653,6 +1687,30 @@ OnDragStop = function()
     TotemBarDB.y = y
 end
 
+-- (Re)applies the current BUTTON_GAP to the pending-assignment panel: frame
+-- width (4 icons + gaps + the fixed accept-button margin) and each icon's
+-- horizontal anchor - both baked in once when the panel is first built, so
+-- (like layoutFlyoutIcons above) this must be called again from
+-- TotemBar.SetButtonGap when the spacing slider changes live, not just at
+-- build time. `frame` lets the build-time call pass the not-yet-assigned
+-- local `f` directly; later calls omit it and fall back to the assignFrame
+-- upvalue (guarded: a no-op if the panel has never been built yet).
+local function layoutAssignIcons(frame)
+    local f = frame or assignFrame
+    if not f then
+        return
+    end
+    f:SetWidth(4 * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP + 40)
+    for i = 1, 4 do
+        local ico = f.icons and f.icons[i]
+        if ico then
+            ico:ClearAllPoints()
+            ico:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT",
+                BUTTON_GAP + (i - 1) * (BUTTON_SIZE + BUTTON_GAP), 6)
+        end
+    end
+end
+
 -- Lazily builds the pending-suggestion panel: a heading label, a row of up
 -- to 4 element-ordered totem icons, an Accept button, and a close "X".
 -- Built once, reused; event-driven show/hide (no OnUpdate, no per-frame
@@ -1663,10 +1721,10 @@ EnsureAssignFrame = function()
     end
 
     -- Parent to the bar so the pending panel inherits the bar's scale
-    -- (UI-size slider), like the flyout. Still DIALOG strata below.
+    -- (UI-size slider), like the flyout. Still DIALOG strata below. Width
+    -- is set below by layoutAssignIcons (once f.icons exists), not here.
     local f = CreateFrame("Frame", "TotemBarAssignFrame", TotemBarFrame)
     f:SetFrameStrata("DIALOG")
-    f:SetWidth(4 * (BUTTON_SIZE + BUTTON_GAP) + BUTTON_GAP + 40)
     f:SetHeight(BUTTON_SIZE + 34)
     -- Rev 4 UI chrome: shared panel skin (bespoke border/bg) instead of the
     -- generic tooltip textures. The bg texture carries the color now, so
@@ -1688,11 +1746,18 @@ EnsureAssignFrame = function()
         local ico = f:CreateTexture("TotemBarAssignIcon" .. i, "ARTWORK")
         ico:SetWidth(BUTTON_SIZE)
         ico:SetHeight(BUTTON_SIZE)
-        ico:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT",
-            BUTTON_GAP + (i - 1) * (BUTTON_SIZE + BUTTON_GAP), 6)
+        -- Anchor applied below via layoutAssignIcons (once the whole row
+        -- exists), not here - the same helper re-applies it live when
+        -- BUTTON_GAP changes.
         ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         f.icons[i] = ico
     end
+
+    -- Sets the frame width and every icon's anchor per BUTTON_GAP now that
+    -- the whole row exists (assignFrame isn't assigned yet at this point in
+    -- the function, hence passing `f` explicitly - see layoutAssignIcons's
+    -- own comment).
+    layoutAssignIcons(f)
 
     local accept = CreateFrame("Button", "TotemBarAssignAccept", f, "UIPanelButtonTemplate")
     accept:SetWidth(28)
@@ -1907,6 +1972,33 @@ function TotemBar.SetBarScale(newScale)
     end
 end
 
+-- Live-applies a new button gap (px, range 10-30): reassigns the shared
+-- BUTTON_GAP upvalue (every closure that reads it - element/flyout/assign-
+-- panel positioning, ApplyBarLayout - sees the new value on its next read,
+-- no re-declaration needed) and persists it. Two icon pools bake their
+-- BUTTON_GAP-dependent anchors in once at build time instead of recomputing
+-- them on every read (unlike ApplyBarLayout, which already re-reads
+-- BUTTON_GAP fresh every call and just needs re-running): the flyout icon
+-- pool and the pending-assignment panel, both re-laid-out here via their
+-- own helpers (layoutFlyoutIcons/layoutAssignIcons above), each a no-op if
+-- that particular frame was never built yet. Driven by the options panel's
+-- "Button spacing" slider.
+function TotemBar.SetButtonGap(newGap)
+    if not newGap then
+        newGap = TotemBar.DEFAULT_BUTTON_GAP or 10
+    end
+    newGap = TotemBar.clampValue(newGap, 10, 30)
+    BUTTON_GAP = newGap
+    if TotemBarDB then
+        TotemBarDB.buttonGap = newGap
+    end
+    layoutFlyoutIcons()
+    layoutAssignIcons()
+    if TotemBar.ApplyBarLayout then
+        TotemBar.ApplyBarLayout()
+    end
+end
+
 -- Shows/hides the bar and persists the choice (TotemBarDB.hidden). Driven
 -- by the options panel's "Show bar" checkbox, the minimap right-click, and
 -- the bare /tb command.
@@ -2016,6 +2108,12 @@ eventFrame:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_CREATURE_BUFFS")
 eventFrame:SetScript("OnEvent", function()
     if event == "ADDON_LOADED" and arg1 == "TotemBar" then
         TotemBar.ensureDefaults()
+        -- BUTTON_GAP was initialized above (file scope, load time) to the
+        -- file-load default, before TotemBarDB was even readable - it must
+        -- be overwritten by the SAVED value now, BEFORE BuildUI runs, or
+        -- the very first layout bakes in the default instead of whatever
+        -- the player set via the options panel's "Button spacing" slider.
+        BUTTON_GAP = TotemBar.clampValue(TotemBarDB.buttonGap or TotemBar.DEFAULT_BUTTON_GAP or 10, 10, 30)
         TotemBar.BuildUI()
         eventFrame:UnregisterEvent("ADDON_LOADED")
     elseif event == "SPELLS_CHANGED" then
