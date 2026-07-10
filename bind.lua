@@ -151,8 +151,9 @@ end
 
 -- Lazily builds a visible on-screen info box shown while bind mode is
 -- active, so the mode (which otherwise only shows via a chat message and
--- stays on until ESC) is hard to miss. pfUI's backdrop skin is used when
--- available, matching the rest of the addon's chrome.
+-- stays on until ESC) is hard to miss. Rev 4 UI chrome: shared bespoke
+-- panel skin (ui.lua's PANEL_BACKDROP), matching the rest of the addon's
+-- chrome, regardless of pfUI presence.
 local function ensureBindInfoBox()
     if infoBox then
         return infoBox
@@ -162,17 +163,17 @@ local function ensureBindInfoBox()
     f:SetHeight(80)
     f:SetPoint("TOP", UIParent, "TOP", 0, -160)
     f:SetFrameStrata("FULLSCREEN_DIALOG")
-    f:SetBackdrop({
+    -- Cheap guard: bind.lua loads LAST per the .toc (after ui.lua), so
+    -- TotemBar.PANEL_BACKDROP is always set by the time this runs - the
+    -- fallback only protects against a future load-order change.
+    local backdrop = TotemBar.PANEL_BACKDROP or {
         bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
         tile = true, tileSize = 32, edgeSize = 32,
         insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    f:SetBackdropColor(0, 0, 0, 0.9)
-    if pfUI and pfUI.api and pfUI.api.CreateBackdrop then
-        f:SetBackdrop(nil)
-        pfUI.api.CreateBackdrop(f, nil, true)
-    end
+    }
+    f:SetBackdrop(backdrop)
+    f:SetBackdropColor(1, 1, 1, 0.97)
     local t = f:CreateFontString("TotemBarBindInfoText", "OVERLAY", "GameFontNormal")
     t:SetPoint("CENTER", f, "CENTER", 0, 0)
     t:SetJustifyH("CENTER")

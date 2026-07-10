@@ -15,6 +15,14 @@ TotemBarDB = TotemBarDB or {}
 --                       Totemic Recall (toggled via the Recall button's
 --                       right-click, see ui.lua); default ON
 --   point/relPoint/x/y = saved frame anchor (see ui.lua)
+--   showDurationRing/ringStyle/showPulseBars/showPulseWaves/pulseGlow/
+--   showTimerText    = Pulse UI (see spec). showPulseBars = the countdown
+--                       bar (primary "when's the next pulse" readout);
+--                       showPulseWaves = the ripple (event feedback only);
+--                       independently toggleable.
+--   barLayout        = bar arrangement: "1x6"|"2x3"|"3x2" (rows x cols),
+--                       cycled via the options panel (see ui.lua's
+--                       ApplyBarLayout / options.lua's layout button).
 function TotemBar.ensureDefaults()
     TotemBarDB.chosen = TotemBarDB.chosen or {}
     TotemBarDB.gapSeconds = TotemBarDB.gapSeconds or TotemBar.DEFAULT_GAP_SECONDS
@@ -35,4 +43,26 @@ function TotemBar.ensureDefaults()
     end
     TotemBarDB.recallGuardSeconds = TotemBarDB.recallGuardSeconds or TotemBar.DEFAULT_RECALL_GUARD
     TotemBarDB.recallRefundPct = TotemBarDB.recallRefundPct or 0.25
+
+    -- Pulse UI (spec docs/superpowers/specs/2026-07-09-pulse-ui-design.md):
+    -- duration ring + pulse bars, all on by default; ringStyle "round" vs
+    -- "square" is the in-game comparison toggle.
+    if TotemBarDB.showDurationRing == nil then
+        TotemBarDB.showDurationRing = true
+    end
+    TotemBarDB.ringStyle = TotemBarDB.ringStyle or "round"
+    if TotemBarDB.showPulseBars == nil then
+        TotemBarDB.showPulseBars = true
+    end
+    if TotemBarDB.showPulseWaves == nil then
+        TotemBarDB.showPulseWaves = true
+    end
+    if TotemBarDB.pulseGlow == nil then
+        TotemBarDB.pulseGlow = true
+    end
+    if TotemBarDB.showTimerText == nil then
+        TotemBarDB.showTimerText = true
+    end
+
+    TotemBarDB.barLayout = TotemBarDB.barLayout or "1x6"
 end

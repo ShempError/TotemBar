@@ -116,6 +116,11 @@ local function CreateSlider(parent, label, minVal, maxVal, step, fmt, getter, se
     return sl
 end
 
+-- Label text for the bar-layout cycle button, reflecting the current choice.
+local function BarLayoutLabel()
+    return "Layout: " .. (TotemBarDB.barLayout or "1x6")
+end
+
 -- Factory: a labeled push button wired to an onClick. Returns the Button.
 -- Named (CLAUDE.md: name all frames) so the pfDebug profiler can attribute it.
 local function CreateButton(parent, name, label, onClick)
@@ -130,6 +135,20 @@ local function CreateButton(parent, name, label, onClick)
     return btn
 end
 
+-- Factory: a static hairline divider spanning the panel's content width at
+-- cursor position y (Rev 4 UI chrome, section-break decoration). Anonymous
+-- texture - it's a static decoration, not an interactive/named widget.
+local function CreateDivider(parent, y)
+    local d = parent:CreateTexture(nil, "ARTWORK")
+    d:SetTexture(TotemBar.UI_TEXTURE)
+    local c = TotemBar.uiCoords[TotemBar.UI_DIVIDER_CELL]
+    d:SetTexCoord(c.l, c.r, c.t, c.b)
+    d:SetPoint("TOPLEFT", parent, "TOPLEFT", 14, y)
+    d:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -14, y)
+    d:SetHeight(7)
+    return d
+end
+
 -- All widgets, stored so OnShow can repopulate them from TotemBarDB.
 local widgets = {}
 
@@ -140,21 +159,21 @@ local function BuildOptionsFrame()
 
     local f = CreateFrame("Frame", "TotemBarOptionsFrame", UIParent)
     f:SetWidth(280)
-    f:SetHeight(388)
+    -- 472 + 44 + 28 + 28: room for the header emblem (+16, taller than the
+    -- old title-only header), two section dividers (+14 each), the "Show
+    -- pulse waves" checkbox row (+28, the pulse ring's countdown readout
+    -- sits alongside the ripple), and the bar-layout cycle button row (+28)
+    -- - see the layout-cursor deltas below (same mechanism as the Task-5
+    -- height bump).
+    f:SetHeight(556)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     f:SetFrameStrata("DIALOG")
-    f:SetBackdrop({
-        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-        tile = true, tileSize = 32, edgeSize = 32,
-        insets = { left = 11, right = 12, top = 12, bottom = 11 },
-    })
-    -- pfUI look: swap the Blizzard dialog backdrop for pfUI's dark panel +
-    -- 1px border. Falls back to the Blizzard backdrop above if pfUI absent.
-    if pfUI and pfUI.api and pfUI.api.CreateBackdrop then
-        f:SetBackdrop(nil)
-        pfUI.api.CreateBackdrop(f, nil, true)
-    end
+    -- Rev 4 UI chrome: shared bespoke panel skin (see ui.lua's PANEL_BACKDROP)
+    -- instead of the Blizzard dialog backdrop or pfUI's generic skin, so the
+    -- options panel matches the bar's own art (emblem/dividers below pair
+    -- with this border/bg specifically).
+    f:SetBackdrop(TotemBar.PANEL_BACKDROP)
+    f:SetBackdropColor(1, 1, 1, 0.97)
     f:SetMovable(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
@@ -162,10 +181,13 @@ local function BuildOptionsFrame()
     f:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
     f:SetClampedToScreen(true)
 
+    -- Plain gold title, no emblem (the Rev-4 totem glyph was removed on
+    -- user request - the silhouette read, well, unfortunate).
     local title = f:CreateFontString("TotemBarOptionsTitle", "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOP", f, "TOP", 0, -16)
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -16)
     title:SetText("TotemBar Options")
     ApplyFont(title, 14)
+    title:SetTextColor(0.85, 0.66, 0.31)
 
     local close = CreateFrame("Button", "TotemBarOptionsClose", f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
@@ -173,7 +195,7 @@ local function BuildOptionsFrame()
         pfUI.api.SkinCloseButton(close, f)
     end
 
-    -- Layout cursor.
+    -- Layout cursor (back to the title-only header spacing).
     local x = 24
     local y = -44
     local function place(w, dy)
@@ -211,6 +233,68 @@ local function BuildOptionsFrame()
     place(widgets.show, -40)
     AddTooltip(widgets.show, "Shows or hides the totem bar. The choice is remembered between sessions.")
 
+    widgets.ring = CreateCheckbox(f, "Show duration ring",
+        function() return TotemBarDB.showDurationRing end,
+        function(v)
+            TotemBarDB.showDurationRing = v
+            if TotemBar.RefreshPulseUI then TotemBar.RefreshPulseUI() end
+        end)
+    place(widgets.ring, -28)
+    AddTooltip(widgets.ring, "Shows a colored arc on each button's ring that empties as the totem's remaining time runs out. The ring frame itself always stays visible.")
+
+    widgets.pulse = CreateCheckbox(f, "Show pulse ring",
+        function() return TotemBarDB.showPulseBars end,
+        function(v)
+            TotemBarDB.showPulseBars = v
+            if TotemBar.RefreshPulseUI then TotemBar.RefreshPulseUI() end
+        end)
+    place(widgets.pulse, -28)
+    AddTooltip(widgets.pulse, "Shows a thin inner ring around the icon that fills up toward the totem's next pulse, then resets.")
+
+    widgets.pulseWaves = CreateCheckbox(f, "Show pulse waves",
+        function() return TotemBarDB.showPulseWaves end,
+        function(v)
+            TotemBarDB.showPulseWaves = v
+            if TotemBar.RefreshPulseUI then TotemBar.RefreshPulseUI() end
+        end)
+    place(widgets.pulseWaves, -28)
+    AddTooltip(widgets.pulseWaves, "Shows an expanding ripple in the totem's color each time a pulsing totem fires.")
+
+    widgets.timerText = CreateCheckbox(f, "Show countdown text",
+        function() return TotemBarDB.showTimerText end,
+        function(v)
+            TotemBarDB.showTimerText = v
+            if TotemBar.RefreshPulseUI then TotemBar.RefreshPulseUI() end
+        end)
+    place(widgets.timerText, -28)
+    AddTooltip(widgets.timerText, "Shows the remaining-seconds text under each element button (the ring shows the same information graphically).")
+
+    -- Bar-layout cycle button: click steps through TotemBar.BAR_LAYOUTS
+    -- (wrapping), saves the choice, and re-lays out the live bar.
+    widgets.layout = CreateButton(f, "TotemBarOptLayoutButton", BarLayoutLabel(), function()
+        local layouts = TotemBar.BAR_LAYOUTS
+        local n = table.getn(layouts)
+        local current = TotemBarDB.barLayout or "1x6"
+        local currentIdx = 1
+        for i = 1, n do
+            if layouts[i] == current then
+                currentIdx = i
+            end
+        end
+        local nextIdx = math.mod(currentIdx, n) + 1
+        TotemBarDB.barLayout = layouts[nextIdx]
+        this:SetText(BarLayoutLabel())
+        if TotemBar.ApplyBarLayout then
+            TotemBar.ApplyBarLayout()
+        end
+    end)
+    place(widgets.layout, -28)
+    AddTooltip(widgets.layout, "Cycles the bar arrangement: one row of six, two rows of three, or three rows of two.")
+
+    -- Section divider (Rev 4 UI chrome): checkboxes above, sliders below.
+    CreateDivider(f, y)
+    y = y - 14
+
     -- Sliders (leave headroom below each for its low/high/value text).
     widgets.guard = CreateSlider(f, "Recall guard (sec)", 0, 5, 0.5, "Recall guard: %.1fs",
         function() return TotemBarDB.recallGuardSeconds end,
@@ -237,6 +321,10 @@ local function BuildOptionsFrame()
     place(widgets.scale, -44)
     AddTooltip(widgets.scale, "Scales the whole bar. It stays anchored at its top-left corner, and the flyout scales with it.")
 
+    -- Section divider (Rev 4 UI chrome): sliders above, action buttons below.
+    CreateDivider(f, y)
+    y = y - 14
+
     optionsFrame = f
     -- Buttons (Reset position, Create macro) are added in Task 4.
     if TotemBar.BuildOptionsButtons then
@@ -248,6 +336,11 @@ local function BuildOptionsFrame()
         widgets.lock:SetChecked(TotemBarDB.locked and 1 or nil)
         widgets.autoRecall:SetChecked(TotemBarDB.autoRecall and 1 or nil)
         widgets.show:SetChecked((not TotemBarDB.hidden) and 1 or nil)
+        widgets.ring:SetChecked(TotemBarDB.showDurationRing and 1 or nil)
+        widgets.pulse:SetChecked(TotemBarDB.showPulseBars and 1 or nil)
+        widgets.pulseWaves:SetChecked(TotemBarDB.showPulseWaves and 1 or nil)
+        widgets.timerText:SetChecked(TotemBarDB.showTimerText and 1 or nil)
+        widgets.layout:SetText(BarLayoutLabel())
         widgets.guard:SetValue(TotemBar.clampValue(TotemBarDB.recallGuardSeconds, 0, 5))
         widgets.gap:SetValue(TotemBar.clampValue(TotemBarDB.gapSeconds, 0.5, 5))
         widgets.scale:SetValue(TotemBar.clampValue(TotemBarDB.scale, 0.5, 2.0))

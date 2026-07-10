@@ -10,6 +10,15 @@ TotemBar = TotemBar or {}
 
 local button = nil
 
+-- Custom icon sheet (tools/gen_icons.js, same texture ui.lua's
+-- ICONS_TEXTURE points at): 4x4 grid of 128px cells, cell 7 = minimap
+-- totem glyph (transparent backing). core/pulse.lua loads before this
+-- file (see the .toc), so buildRingTexCoords is already available; built
+-- once here at load, not per-tick.
+local MINIMAP_ICON_TEXTURE = "Interface\\AddOns\\TotemBar\\textures\\icons"
+local MINIMAP_ICON_CELL = 7
+local minimapIconCoords = TotemBar.buildRingTexCoords(16, 4)
+
 -- Repositions the button on its orbit for the given angle (degrees).
 local function PlaceButton(angleDeg)
     if not button then
@@ -33,7 +42,9 @@ local function BuildMinimapButton()
     btn:SetFrameLevel(9)
 
     local icon = btn:CreateTexture(nil, "ARTWORK")
-    icon:SetTexture("Interface\\Icons\\Spell_Nature_TremorTotem")
+    icon:SetTexture(MINIMAP_ICON_TEXTURE)
+    local ic = minimapIconCoords[MINIMAP_ICON_CELL]
+    icon:SetTexCoord(ic.l, ic.r, ic.t, ic.b)
     icon:SetWidth(20)
     icon:SetHeight(20)
     icon:SetPoint("CENTER", btn, "CENTER", 0, 0)

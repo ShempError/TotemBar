@@ -32,4 +32,53 @@ H.run("macroSpec: fixed name/body/icon", function()
     H.assert_eq(icon, "Spell_Nature_TremorTotem", "macro icon (bare name)")
 end)
 
+-- Button order in every positions table: Fire, Earth, Water, Air, Recall,
+-- DropSet (matches ui.lua's ApplyBarLayout button-list order).
+local BUTTON_LABELS = { "Fire", "Earth", "Water", "Air", "Recall", "DropSet" }
+
+local function assert_positions(layout, expected)
+    local positions = TotemBar.BAR_LAYOUT_POSITIONS[layout]
+    H.assert_eq(table.getn(positions), 6, layout .. " has 6 slots")
+    for idx = 1, 6 do
+        local label = layout .. " " .. BUTTON_LABELS[idx]
+        H.assert_eq(positions[idx][1], expected[idx][1], label .. " col")
+        H.assert_eq(positions[idx][2], expected[idx][2], label .. " row")
+    end
+end
+
+H.run("BAR_LAYOUT_POSITIONS: 1x6 - one row of six", function()
+    assert_positions("1x6", { {0,0}, {1,0}, {2,0}, {3,0}, {4,0}, {5,0} })
+end)
+
+H.run("BAR_LAYOUT_POSITIONS: 2x3 - elements as 2x2 block, utilities in col 3", function()
+    -- User request: the four element totems fill the first two COLUMNS as a
+    -- 2x2 block; Recall/DropSet stack in the third column.
+    assert_positions("2x3", { {0,0}, {1,0}, {0,1}, {1,1}, {2,0}, {2,1} })
+end)
+
+H.run("BAR_LAYOUT_POSITIONS: 3x2 - elements as top 2x2 block, utility row below", function()
+    assert_positions("3x2", { {0,0}, {1,0}, {0,1}, {1,1}, {0,2}, {1,2} })
+end)
+
+H.run("barDimensions: 1x6 - single row, no extra pitch", function()
+    local w, h, rows = TotemBar.barDimensions(6, 6, 36, 10, 0)
+    H.assert_eq(w, 286, "1x6 width")
+    H.assert_eq(h, 56, "1x6 height")
+    H.assert_eq(rows, 1, "1x6 rows")
+end)
+
+H.run("barDimensions: 2x3 - two rows, extra pitch 16", function()
+    local w, h, rows = TotemBar.barDimensions(6, 3, 36, 10, 16)
+    H.assert_eq(w, 148, "2x3 width")
+    H.assert_eq(h, 118, "2x3 height")
+    H.assert_eq(rows, 2, "2x3 rows")
+end)
+
+H.run("barDimensions: 3x2 - three rows, extra pitch 16", function()
+    local w, h, rows = TotemBar.barDimensions(6, 2, 36, 10, 16)
+    H.assert_eq(w, 102, "3x2 width")
+    H.assert_eq(h, 180, "3x2 height")
+    H.assert_eq(rows, 3, "3x2 rows")
+end)
+
 H.summary()
