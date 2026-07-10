@@ -15,7 +15,7 @@ TotemBarDB = TotemBarDB or {}
 --                       Totemic Recall (toggled via the Recall button's
 --                       right-click, see ui.lua); default ON
 --   point/relPoint/x/y = saved frame anchor (see ui.lua)
---   showDurationRing/ringStyle/showPulseBars/showPulseWaves/pulseGlow/
+--   showDurationRing/ringStyle/showPulseBars/showPulseWaves/
 --   showTimerText    = Pulse UI (see spec). showPulseBars = the countdown
 --                       bar (primary "when's the next pulse" readout);
 --                       showPulseWaves = the ripple (event feedback only);
@@ -62,9 +62,8 @@ function TotemBar.ensureDefaults()
     if TotemBarDB.showPulseWaves == nil then
         TotemBarDB.showPulseWaves = true
     end
-    if TotemBarDB.pulseGlow == nil then
-        TotemBarDB.pulseGlow = true
-    end
+    -- dead setting removed in v0.2.2, clear persisted dust
+    TotemBarDB.pulseGlow = nil
     if TotemBarDB.showTimerText == nil then
         TotemBarDB.showTimerText = true
     end

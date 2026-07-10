@@ -38,6 +38,13 @@ end
 function TotemBar.CastTotem(name)
     if name then
         CastSpellByName(name)
+        -- keybind casts must feed the own-tracking timers exactly like the
+        -- flyout click handler does (ui.lua) - without this, vanilla-only
+        -- setups get no duration ring/pulse for keybind-cast totems.
+        local element = TotemBar.elementOf(name)
+        if element then
+            TotemBar.recordCast(element, name)
+        end
     end
 end
 
@@ -46,6 +53,10 @@ function TotemBar.CastElement(element)
     local n = TotemBarDB and TotemBarDB.chosen and TotemBarDB.chosen[element]
     if n then
         CastSpellByName(n)
+        -- keybind casts must feed the own-tracking timers exactly like the
+        -- flyout click handler does (ui.lua) - without this, vanilla-only
+        -- setups get no duration ring/pulse for keybind-cast totems.
+        TotemBar.recordCast(element, n)
     else
         ChatOut:AddMessage("TotemBar: no totem chosen for " .. tostring(element) .. ".")
     end

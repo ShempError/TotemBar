@@ -15,22 +15,22 @@ H.run("ensureDefaults: fills pulse-UI fields on a fresh DB", function()
     H.assert_eq(TotemBarDB.ringStyle, "round", "round style by default")
     H.assert_eq(TotemBarDB.showPulseBars, true, "pulse bars on by default")
     H.assert_eq(TotemBarDB.showPulseWaves, true, "pulse waves on by default")
-    H.assert_eq(TotemBarDB.pulseGlow, true, "glow on by default")
+    H.assert_eq(TotemBarDB.pulseGlow, nil, "pulseGlow is cleared (dead setting)")
     H.assert_eq(TotemBarDB.showTimerText, true, "timer text stays on by default")
     H.assert_eq(TotemBarDB.barLayout, "1x6", "bar layout defaults to 1x6")
 end)
 
-H.run("ensureDefaults: respects explicit user choices", function()
+H.run("ensureDefaults: clears dead pulseGlow even if persisted", function()
     TotemBarDB = { showDurationRing = false, ringStyle = "square",
                    showPulseBars = false, showPulseWaves = false,
-                   pulseGlow = false, showTimerText = false,
+                   pulseGlow = true, showTimerText = false,
                    barLayout = "3x2" }
     TotemBar.ensureDefaults()
     H.assert_eq(TotemBarDB.showDurationRing, false, "user ring OFF kept")
     H.assert_eq(TotemBarDB.ringStyle, "square", "user square style kept")
     H.assert_eq(TotemBarDB.showPulseBars, false, "user bars OFF kept")
     H.assert_eq(TotemBarDB.showPulseWaves, false, "user waves OFF kept")
-    H.assert_eq(TotemBarDB.pulseGlow, false, "user glow OFF kept")
+    H.assert_eq(TotemBarDB.pulseGlow, nil, "persisted pulseGlow cleared (dead setting)")
     H.assert_eq(TotemBarDB.showTimerText, false, "user text OFF kept")
     H.assert_eq(TotemBarDB.barLayout, "3x2", "user 3x2 layout kept")
 end)
