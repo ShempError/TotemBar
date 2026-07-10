@@ -31,6 +31,9 @@ server data, not guesswork. No dependencies; adopts the
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.2.2** (2026-07-10) — "Button spacing" slider in the options panel;
+  keybind casts now feed TotemBar's own duration/pulse timers (previously
+  only click-casts and pfUI did); removed the dead `pulseGlow` setting.
 - **v0.2.1** (2026-07-10) — tooltips now show your highest known rank (they
   read rank-1 values before; the cast itself was always highest-rank) and
   display the rank next to the name.

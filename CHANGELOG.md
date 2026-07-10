@@ -2,6 +2,23 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.2.2 — 2026-07-10
+
+### Added
+- **"Button spacing" slider** in the options panel (10–30 px) — adjusts the
+  gap between bar buttons live, including the flyout and assignment panel.
+
+### Fixed
+- **Keybind casts now start TotemBar's own duration/pulse timers.**
+  Per-totem and element key bindings call the same tracking as click-casts.
+  Previously, setups without pfUI got no timer/ring/pulse feedback for
+  keybind-cast totems, and even with pfUI the spawn ripple and out-of-range
+  tint were missing for them.
+
+### Removed
+- **Dead `pulseGlow` setting** — the anticipation glow is part of "Show
+  pulse waves"; stale saved values are cleaned up automatically.
+
 ## v0.2.1 — 2026-07-10
 
 ### Fixed
