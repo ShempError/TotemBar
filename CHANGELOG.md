@@ -2,6 +2,16 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.2.1 — 2026-07-10
+
+### Fixed
+- **Tooltips showed rank 1 instead of your highest rank.** Both totem
+  tooltips (element buttons and the flyout) resolved the spell by its first
+  spellbook match — which is rank 1 — so mana cost, damage and duration read
+  far too low. Display-only: the actual cast is name-based and always used
+  your highest rank. Tooltips now resolve to the highest known rank **and
+  show the rank** next to the spell name (vanilla's tooltip omits it).
+
 ## v0.2.0 — 2026-07-10
 
 **The Pulse UI release** — a complete visual rework of the bar around one idea:

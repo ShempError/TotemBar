@@ -31,6 +31,9 @@ server data, not guesswork. No dependencies; adopts the
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.2.1** (2026-07-10) — tooltips now show your highest known rank (they
+  read rank-1 values before; the cast itself was always highest-rank) and
+  display the rank next to the name.
 - **v0.1.3** (2026-07-09) — Totemic Recall no longer wastes its 6s cooldown
   when no totems are out.
 - **v0.1.2** (2026-07-09) — mana cost on the drop-set tooltip, live refund
