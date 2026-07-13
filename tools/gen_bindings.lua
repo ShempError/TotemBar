@@ -7,7 +7,7 @@ dofile("core/bindlogic.lua")   -- bindingSuffix
 local L = {}
 local function w(s) table.insert(L, s) end
 w('<Bindings>')
-w('  <Binding name="TOTEMBAR_DROPSET" header="TOTEMBAR">TotemBar.recallAndCastAll();</Binding>')
+w('  <Binding name="TOTEMBAR_DROPSET" runOnUp="true" header="TOTEMBAR">TotemBar.dropSetKey(keystate);</Binding>')
 w('  <Binding name="TOTEMBAR_RECALL">TotemBar.CastRecall();</Binding>')
 w('  <Binding name="TOTEMBAR_TOGGLEBAR">TotemBar.ToggleBar();</Binding>')
 w('  <Binding name="TOTEMBAR_TOGGLEOPTIONS">TotemBar.ToggleOptions();</Binding>')

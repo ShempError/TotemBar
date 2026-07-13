@@ -1,5 +1,5 @@
 <Bindings>
-  <Binding name="TOTEMBAR_DROPSET" header="TOTEMBAR">TotemBar.recallAndCastAll();</Binding>
+  <Binding name="TOTEMBAR_DROPSET" runOnUp="true" header="TOTEMBAR">TotemBar.dropSetKey(keystate);</Binding>
   <Binding name="TOTEMBAR_RECALL">TotemBar.CastRecall();</Binding>
   <Binding name="TOTEMBAR_TOGGLEBAR">TotemBar.ToggleBar();</Binding>
   <Binding name="TOTEMBAR_TOGGLEOPTIONS">TotemBar.ToggleOptions();</Binding>

@@ -2,6 +2,23 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.2.3 — 2026-07-13
+
+### Fixed
+- **Totemic Recall no longer sweeps away a freshly-placed set (nampower).**
+  With nampower installed, dropping your set while the global cooldown was
+  active could make the new totems appear and then instantly vanish: nampower
+  queued Totemic Recall behind the GCD, so it fired *after* the (off-GCD)
+  totems were placed and pulled them right back down. TotemBar now casts
+  Recall via `CastSpellByNameNoQueue` when nampower provides it, so a
+  GCD-blocked Recall is skipped for that press instead of firing late. No
+  effect for setups without nampower.
+
+### Changed
+- **The drop-set keybind now recalls on key-down and places on key-release.**
+  This keeps the recall and the totem placements as separate hardware events;
+  for a normal tap the difference is imperceptible.
+
 ## v0.2.2 — 2026-07-10
 
 ### Added

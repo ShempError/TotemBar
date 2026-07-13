@@ -355,6 +355,26 @@ function TotemBar.shouldRecall(autoRecall, lastDeployTime, now, guardSeconds)
     return false
 end
 
+-- Casts Totemic Recall bypassing nampower's spell queue when that API is
+-- present. Root cause of the "place a set, it vanishes a moment later" bug:
+-- under nampower, a plain CastSpellByName of Totemic Recall (a GCD-tied
+-- instant) issued while a GCD is active is QUEUED, not cast, and pops at
+-- GCD-end -- by which time the totems are already down (TWoW gives each totem
+-- element its own non-GCD recovery category, so the 4 totems fire immediately
+-- with queue priority). The late Recall then sweeps the fresh set. Bypassing
+-- the queue means a GCD-blocked Recall simply fails that press instead of
+-- being deferred, so it can never fire late and tear the totems down. Falls
+-- back to a plain cast when nampower isn't installed (the function is nil).
+-- (KG: NP_QueueInstantSpells default 1 is the deferral; CastSpellByNameNoQueue
+-- is nampower's queue-bypass cast.)
+local function castRecallNoQueue()
+    if type(CastSpellByNameNoQueue) == "function" then
+        CastSpellByNameNoQueue("Totemic Recall")
+    else
+        CastSpellByName("Totemic Recall")
+    end
+end
+
 -- Recall-then-deploy: when TotemBarDB.autoRecall is on (the default -
 -- toggleable via the Recall button's right-click, see ui.lua), casts
 -- Totemic Recall FIRST (drops existing totems and refunds some mana)
@@ -376,9 +396,43 @@ function TotemBar.recallAndCastAll()
     local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
     if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
        and TotemBar.anyTotemOut() then
-        CastSpellByName("Totemic Recall")
+        castRecallNoQueue()
         TotemBar.clearActiveTotems()
     end
     TotemBar.castAll()
     TotemBar.castState.lastDeployTime = now
+end
+
+-- Key-down/key-up split for the DropSet keybind. Bound in Bindings.xml with
+-- runOnUp="true", so this runs on BOTH flanks with the global `keystate` set
+-- to "down" / "up" beforehand. Casting Totemic Recall on the DOWN stroke and
+-- placing the set on the RELEASE. The real fix for the teardown is
+-- castRecallNoQueue() (see above) -- bypassing nampower's queue so a
+-- GCD-blocked Recall never fires late and sweeps the fresh set. The down/up
+-- split adds belt-and-suspenders temporal separation: the Recall on the down
+-- stroke has definitively resolved-or-failed (it is never queued) by the time
+-- the release places the set. Both flanks are real hardware events, so both
+-- may cast (Blizzard's own ActionButtonUp casts on release too), unlike a
+-- timer-deferred placement which this client blocks as a non-hardware cast.
+--
+-- Still guarded by shouldRecall()'s 2s window (a rapid re-press within the
+-- guard skips the Recall so it can't pull the just-placed set). keystate is
+-- nil only if the binding ran without runOnUp (misconfig / older client);
+-- treat nil like "up" so a single fire at least still PLACES rather than
+-- silently doing nothing.
+function TotemBar.dropSetKey(keystate)
+    if keystate == "down" then
+        local now = GetTime()
+        local autoRecall = TotemBarDB and TotemBarDB.autoRecall
+        local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
+        if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
+           and TotemBar.anyTotemOut() then
+            castRecallNoQueue()
+            TotemBar.clearActiveTotems()
+        end
+    else
+        -- Release (or nil fallback): place the set now, in this hardware frame.
+        TotemBar.castAll()
+        TotemBar.castState.lastDeployTime = GetTime()
+    end
 end
