@@ -31,6 +31,11 @@ server data, not guesswork. No dependencies; adopts the
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.2.3** (2026-07-13) — fixes a bug where dropping your set could make the
+  new totems vanish an instant later: with nampower, Totemic Recall was queued
+  behind the global cooldown and fired *after* the (off-GCD) totems were
+  placed, sweeping them. Recall now bypasses the spell queue so it can't pull a
+  fresh set.
 - **v0.2.2** (2026-07-10) — "Button spacing" slider in the options panel;
   keybind casts now feed TotemBar's own duration/pulse timers (previously
   only click-casts and pfUI did); removed the dead `pulseGlow` setting.
