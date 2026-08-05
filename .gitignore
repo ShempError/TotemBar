@@ -1,0 +1,8 @@
+*.log
+Thumbs.db
+.DS_Store
+tools/preview*.png
+
+# Internal working notes - never publish
+docs/superpowers/
+.superpowers/

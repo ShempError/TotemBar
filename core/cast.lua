@@ -1,0 +1,647 @@
+-- TotemBar - core/cast.lua
+-- Cast-cycle logic. The decision-making is split into two PURE,
+-- offline-tested functions (nextIndex, findFilledSlot); castNext() is
+-- the thin wrapper that touches CastSpellByName / GetTime / TotemBarDB.
+
+TotemBar = TotemBar or {}
+
+TotemBar.DEFAULT_GAP_SECONDS = 2
+
+-- Anti double-press guard for recallAndCastAll: if a deploy happened within
+-- this many seconds, a rapid second press SKIPS the recall (so it doesn't
+-- pull the just-placed totems, which are still on their ~1.5s element
+-- cooldown and couldn't be re-placed).
+TotemBar.DEFAULT_RECALL_GUARD = 2
+
+-- Default gap (px) between bar buttons. Matches ui.lua's file-scope
+-- BUTTON_GAP default; the options panel's "Button spacing" slider (range
+-- 10-30px) live-applies changes via TotemBar.SetButtonGap (ui.lua) and
+-- persists them to TotemBarDB.buttonGap (core/config.lua).
+TotemBar.DEFAULT_BUTTON_GAP = 10
+
+-- Cycle state: which slot was cast last, and when.
+TotemBar.castState = TotemBar.castState or {
+    index = 0,      -- 0 = no cast yet (or state was reset)
+    lastTime = 0,
+    lastDeployTime = 0,
+}
+
+-- Own-tracking table for the OmniCC-style remaining-duration display in
+-- ui.lua: fallback source for when pfUI's libtotem (GetTotemInfo) isn't
+-- present, or reports a given slot inactive. element -> {start=,
+-- duration=}, both in TotemBar.recordCast() below.
+TotemBar.activeTotems = TotemBar.activeTotems or {}
+
+-- Pure: given the previously cast slot index, the time of that previous
+-- cast, the current time, the allowed gap (seconds) and the number of
+-- slots, returns the next slot index (1-based) to advance to.
+--
+-- - prevIndex <= 0 (never cast yet)      -> 1
+-- - now - lastTime > gapSeconds          -> 1 (fresh spam, start over)
+-- - otherwise                            -> prevIndex + 1, wrapping from
+--                                            numSlots back to 1
+function TotemBar.nextIndex(prevIndex, lastTime, now, gapSeconds, numSlots)
+    if not prevIndex or prevIndex <= 0 then
+        return 1
+    end
+    if not lastTime or (now - lastTime) > gapSeconds then
+        return 1
+    end
+    local nxt = prevIndex + 1
+    if nxt > numSlots then
+        nxt = 1
+    end
+    return nxt
+end
+
+-- Pure: starting at startIndex, walk forward through `elements`
+-- (wrapping past the end back to 1) and return the index of the first
+-- element for which chosen[element] is truthy (a totem name). Returns
+-- nil if none of the slots are filled.
+function TotemBar.findFilledSlot(chosen, elements, startIndex)
+    local numSlots = table.getn(elements)
+    if numSlots == 0 or not startIndex then
+        return nil
+    end
+    for tries = 0, numSlots - 1 do
+        local slot = startIndex + tries
+        if slot > numSlots then
+            slot = slot - numSlots
+        end
+        if chosen[elements[slot]] then
+            return slot
+        end
+    end
+    return nil
+end
+
+-- Pure: seconds remaining given a start time, a duration and the
+-- current time. May return <= 0 (already expired); callers decide how
+-- to treat that. Returns nil if either start or duration is missing.
+function TotemBar.remaining(start, duration, now)
+    if not start or not duration then
+        return nil
+    end
+    return start + duration - now
+end
+
+-- Pure: is any element's own-tracked totem still out (remaining > 0)?
+function TotemBar.anyActiveTracked(activeTotems, elements, now, remainingFn)
+    if not activeTotems then
+        return false
+    end
+    for i = 1, table.getn(elements) do
+        local rec = activeTotems[elements[i]]
+        if rec then
+            local rem = remainingFn(rec.start, rec.duration, now)
+            if rem and rem > 0 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Pure: decides which of two already-computed remaining-seconds values
+-- to show for one element's timer text. GetTotemInfo (pfUI's
+-- libtotem), when it reports the slot active, is authoritative;
+-- otherwise (absent, or reporting the slot inactive) falls back to
+-- TotemBar's own cast-tracking. Returns nil when neither source has
+-- time left.
+function TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
+    -- FIX 2026-07-15: trust GTI (pfUI libtotem) ONLY when it reports the slot active
+    -- AND with positive time left. Previously a stale-active GTI slot (active but
+    -- gtiRemaining<=0 -- libtotem evicts lazily on read) hit the bare `return nil` and
+    -- BLOCKED the timer even when own-tracking had a valid time. That produced the
+    -- Fire/Earth-dead, Air-flickering, Water-ok pattern (pfUI's single non-slot-indexed
+    -- cast queue loses the race for the slots cast later in a multi-drop).
+    if gtiActive and gtiRemaining and gtiRemaining > 0 then
+        return gtiRemaining
+    end
+    if ownRemaining and ownRemaining > 0 then
+        return ownRemaining
+    end
+    return nil
+end
+
+-- Pure: OmniCC-style text for an already-known-positive remaining
+-- seconds value: whole minutes rounded up from 60s on, plain rounded-up
+-- integer seconds below that.
+function TotemBar.formatRemaining(remaining)
+    if remaining >= 60 then
+        return string.format("%dm", math.ceil(remaining / 60))
+    end
+    return string.format("%d", math.ceil(remaining))
+end
+
+-- Pure: strips a trailing rank suffix from a spell name as CastSpellByName
+-- would receive it -- both "Searing Totem(Rank 4)" (no space, what the
+-- client itself produces) and "Searing Totem (Rank 4)" (a space, common in
+-- hand-typed macros) are accepted forms. Returns the input unchanged if it
+-- carries no such suffix, or nil if name is nil.
+function TotemBar.stripRankSuffix(name)
+    if not name then
+        return nil
+    end
+    local _, _, base = string.find(name, "^(.-)%s*%(.-%)%s*$")
+    if base and base ~= "" then
+        return base
+    end
+    return name
+end
+
+-- Pure: given a spell name as CastSpellByName/GetSpellName would produce it
+-- (optionally rank-suffixed, see stripRankSuffix above), returns the
+-- element it belongs to and its rank-stripped base name -- or nil, nil if
+-- rawName is nil or isn't one of TotemBar's known totems (core/totemdata.lua).
+-- Used by the universal CastSpellByName/CastSpell hooks below to decide
+-- whether a cast caught outside TotemBar's own paths is a totem at all.
+function TotemBar.elementFromCastName(rawName)
+    if not rawName then
+        return nil, nil
+    end
+    local baseName = TotemBar.stripRankSuffix(rawName)
+    local element = TotemBar.elementOf(baseName)
+    if not element then
+        return nil, nil
+    end
+    return element, baseName
+end
+
+-- Finds the spellbook index of a known spell by exact name, or nil.
+-- Used to duplicate ui.lua's own file-local FindSpellIndexByName as its
+-- own fresh linear scan (no common "api" module to hang a single copy
+-- off). Both now route through core/spellindex.lua's cached
+-- TotemBar.findSpellIndex (loaded earlier in the TOC) instead.
+
+-- Records that `totemName` was just cast into `element`'s slot, into
+-- TotemBar's own tracking table (see activeTotems above). Touches
+-- GetTime(), a spellbook index/texture scan and (for Searing Totem) a
+-- rank scan, so it isn't pure; called from both the bar's left-click
+-- path (ui.lua) and castNext()/castAll() below.
+--
+-- Also stashes the totem spell's icon texture (rec.icon) and a
+-- self-learning "did I ever see this totem's buff" flag
+-- (rec.everHadBuff, starts false). ui.lua's out-of-range red-tint
+-- feature is buff-presence based: a totem's party buff uses the SAME
+-- icon texture as the totem spell itself (verified in-game), so
+-- TotemBar.hasBuffWithIcon(rec.icon) tells whether the player is
+-- currently benefiting from THIS cast totem.
+function TotemBar.recordCast(element, totemName)
+    if not element or not totemName then
+        return
+    end
+    local highestRank = nil
+    if totemName == "Searing Totem" and TotemBar.highestKnownRank then
+        highestRank = TotemBar.highestKnownRank(totemName)
+    end
+    local icon = nil
+    local idx = TotemBar.findSpellIndex(totemName)
+    if idx then
+        icon = GetSpellTexture(idx, BOOKTYPE_SPELL)
+    end
+    local rec = {
+        start = GetTime(),
+        duration = TotemBar.durationWithMastery(
+            TotemBar.totemDuration(totemName, highestRank),
+            TotemBar.isHelpfulTotem(totemName),
+            TotemBar.hasTotemicMastery and TotemBar.hasTotemicMastery()),
+        totemName = totemName,
+        icon = icon,
+        everHadBuff = false,
+    }
+    TotemBar.activeTotems[element] = rec
+end
+
+-- Records a totem cast caught by the universal CastSpellByName/CastSpell
+-- hooks below, UNLESS TotemBar's own code already recorded this EXACT cast
+-- this same GetTime() tick. Every TotemBar-exposed cast entry point
+-- (bind.lua's CastTotem/CastElement, castNext/castAll/dropSetKey/
+-- recallAndCastAll above, ui.lua's bar/flyout click handlers) already calls
+-- TotemBar.recordCast() itself right after casting -- verified by a full
+-- inventory of every Bindings.xml binding, the "Totems" macro, and every
+-- click handler (2026-07-16): none of them skip it. So a hook firing for a
+-- cast that ALSO went through one of those paths would otherwise
+-- double-record in the same frame (harmless -- recordCast just overwrites
+-- with a near-identical timestamp -- but trivially avoidable with this one
+-- check, so it is).
+function TotemBar.recordCastFromHook(element, totemName)
+    local existing = TotemBar.activeTotems[element]
+    if existing and existing.totemName == totemName and existing.start == GetTime() then
+        return
+    end
+    TotemBar.recordCast(element, totemName)
+end
+
+-- ===== Universal cast hooks: catch totem casts from ANY path =====
+-- Defense-in-depth for totems cast WITHOUT going through any TotemBar
+-- function at all -- e.g. a hand-written macro's own `/cast Searing Totem`,
+-- or another addon. Every path TotemBar itself exposes already calls
+-- recordCast() (see recordCastFromHook's comment above) so this is a
+-- safety net, not the primary fix for a "no countdown" report.
+--
+-- Fixed arity on purpose (project rule: no vararg closures) -- both globals
+-- have a stable, known 1.12 signature: CastSpellByName(name, onSelf),
+-- CastSpell(spellId, bookType).
+--
+-- Plain global reassignment, not hooksecurefunc -- pfUI provides
+-- hooksecurefunc as its own polyfill (compat/vanilla.lua; native 1.12 has
+-- no such function), and TotemBar must not hard-depend on pfUI being
+-- loaded. Saving whatever function is CURRENTLY bound to the global and
+-- calling it first (before doing our own extra work) composes correctly
+-- with pfUI's own libtotem hook on CastSpellByName/CastSpell regardless of
+-- addon load order: whichever wraps last just adds a layer on top of
+-- whatever was already there.
+--
+-- UseAction is intentionally NOT hooked. 1.12 has no GetActionInfo /
+-- GetActionSpellId to read a spell off an action-bar slot directly; pfUI's
+-- own UseAction coverage (libtotem.lua) only works by scanning a hidden
+-- GameTooltip:SetAction(slot) via its private libtipscan library, wired up
+-- through hooksecurefunc -- both the tooltip-scan trick and hooksecurefunc
+-- are pfUI-internal, not something TotemBar can reimplement without either
+-- a hard pfUI dependency or a whole new action-slot tooltip scanner (this
+-- file already has a spellbook-index tooltip scanner for mana costs, see
+-- core/manacost.lua, but nothing that scans by action slot). Given every
+-- TotemBar-native path already records, and pfUI's GetTotemInfo already
+-- covers action-bar-dragged totem casts as the resolveRemaining/
+-- resolveDuration fallback source when pfUI is present, this gap was
+-- judged not worth the added dependency/complexity.
+if type(CastSpellByName) == "function" then
+    local origCastSpellByName = CastSpellByName
+    CastSpellByName = function(name, onSelf)
+        origCastSpellByName(name, onSelf)
+        local element, baseName = TotemBar.elementFromCastName(name)
+        if element then
+            TotemBar.recordCastFromHook(element, baseName)
+        end
+    end
+end
+
+if type(CastSpell) == "function" then
+    local origCastSpell = CastSpell
+    CastSpell = function(spellId, bookType)
+        origCastSpell(spellId, bookType)
+        if type(GetSpellName) == "function" then
+            local rawName = GetSpellName(spellId, bookType)
+            local element, baseName = TotemBar.elementFromCastName(rawName)
+            if element then
+                TotemBar.recordCastFromHook(element, baseName)
+            end
+        end
+    end
+end
+
+-- Module-scratch table for the buff-texture scan below, reused every
+-- call (hasBuffWithIcon runs ~5x/sec, from ui.lua's throttled timer
+-- tick) so it doesn't allocate a new table each time. buffScratchLen
+-- tracks how far the previous scan filled it, so leftover entries past
+-- the new scan's length get nilled out - keeping it a clean, hole-free
+-- 1..n array (table.getn needs that to be reliable in Lua 5.0).
+local buffScratch = {}
+local buffScratchLen = 0
+
+-- Pure: given a flat array of buff texture path strings (some entries
+-- may be nil) and a totem spell's icon texture path, returns true if
+-- any buff texture matches iconPath via a case-insensitive literal
+-- substring search (tolerates path/casing differences between
+-- GetSpellTexture's and UnitBuff's returned strings). Returns false if
+-- iconPath or buffTexList is nil, or nothing matches.
+function TotemBar.buffTexturesMatch(buffTexList, iconPath)
+    if not iconPath or not buffTexList then
+        return false
+    end
+    local needle = string.lower(iconPath)
+    for i = 1, table.getn(buffTexList) do
+        local tex = buffTexList[i]
+        if tex and string.find(string.lower(tex), needle, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Thin WoW-API wrapper: scans the player's current buffs (UnitBuff
+-- "player" 1..32, stopping at the first nil slot) into the reusable
+-- buffScratch table, then hands it to the pure
+-- TotemBar.buffTexturesMatch() above. This is the "am I in this totem's
+-- range?" signal for ui.lua's red-tint feature: a totem's party buff
+-- shares its spell's icon texture (verified in-game), so having a
+-- matching buff means the totem is currently affecting the player.
+function TotemBar.hasBuffWithIcon(iconPath)
+    if not iconPath then
+        return false
+    end
+    local n = 0
+    for i = 1, 32 do
+        local tex = UnitBuff("player", i)
+        if not tex then
+            break
+        end
+        n = n + 1
+        buffScratch[n] = tex
+    end
+    for i = n + 1, buffScratchLen do
+        buffScratch[i] = nil
+    end
+    buffScratchLen = n
+    return TotemBar.buffTexturesMatch(buffScratch, iconPath)
+end
+
+-- Clears every own-tracked totem timer at once (e.g. after Totemic
+-- Recall, which drops all active totems simultaneously).
+function TotemBar.clearActiveTotems()
+    for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+        TotemBar.activeTotems[TotemBar.TOTEM_ELEMENTS[i]] = nil
+    end
+end
+
+-- Is at least one totem currently out? Used to avoid wasting Totemic Recall's
+-- own 6-second cooldown on a no-op cast: recalling with nothing out still puts
+-- Recall on cooldown, so a fresh set placed right after can't be recalled for
+-- 6s. Permissive on purpose - returns true if EITHER our own cast-tracking OR
+-- GetTotemInfo (pfUI libtotem / SuperWoW, when present) reports a totem out, so
+-- a legitimate recall is never wrongly blocked; only when both agree nothing is
+-- out do we suppress the cast.
+function TotemBar.anyTotemOut()
+    if TotemBar.anyActiveTracked(TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS,
+                                 GetTime(), TotemBar.remaining) then
+        return true
+    end
+    if GetTotemInfo then
+        for slot = 1, 4 do
+            if GetTotemInfo(slot) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- pure: does the addon currently hold ANY tracked totem record (regardless of expiry)?
+-- TotemBar.activeTotems is an in-memory table cleared to {} on load (see top of this file,
+-- NOT persisted to SavedVariables), so a non-empty table proves we have cast at least one
+-- totem THIS session and can reason about whether it is still out.
+function TotemBar.hasTrackedTotems(activeTotems, elements)
+    if not activeTotems then return false end
+    for i = 1, table.getn(elements) do
+        if activeTotems[elements[i]] then return true end
+    end
+    return false
+end
+
+-- Should the manual-recall gate BLOCK the recall? Only when we are CONFIDENT that nothing
+-- is out: we have tracked at least one totem THIS session AND all tracked totems have
+-- expired. When tracking is empty (fresh load, or after a /reload -- activeTotems is
+-- in-memory only and reset on load) the state is UNKNOWN, not "none out": on 1.12 there is
+-- no GetTotemInfo / no "totemN" UnitID to re-detect a totem that was cast BEFORE the reload
+-- (KG-confirmed 2026-07-14 -- no reload-proof detection exists for all totem types). So in
+-- the unknown case FAIL OPEN -- let the recall through rather than falsely reporting "no
+-- totems out" and blocking a legitimate recall of a still-standing totem (the bug this fixes:
+-- our reloads wiped the tracking while the totems stayed physically out). Worst case of
+-- fail-open is one needless recall right after a reload -- far cheaper than a blocked one.
+function TotemBar.confidentNoneOut()
+    if not TotemBar.hasTrackedTotems(TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS) then
+        return false
+    end
+    return not TotemBar.anyTotemOut()
+end
+
+-- Casts exactly ONE totem per call: the next slot in Fire -> Earth ->
+-- Water -> Air order, skipping empty (unassigned) slots. If more than
+-- gapSeconds has passed since the previous call, the cycle restarts at
+-- the first filled slot (so a fresh spam always begins with totem 1).
+--
+-- Intended for a macro: `/script TotemBar.castNext()`
+function TotemBar.castNext()
+    local db = TotemBarDB
+    local chosen = (db and db.chosen) or {}
+    local gap = (db and db.gapSeconds) or TotemBar.DEFAULT_GAP_SECONDS
+    local elements = TotemBar.TOTEM_ELEMENTS
+    local numSlots = table.getn(elements)
+    local now = GetTime()
+
+    local state = TotemBar.castState
+    local startIdx = TotemBar.nextIndex(state.index, state.lastTime, now, gap, numSlots)
+    local slot = TotemBar.findFilledSlot(chosen, elements, startIdx)
+
+    if not slot then
+        -- Nothing assigned to any element; nothing to cast.
+        state.index = 0
+        state.lastTime = now
+        return nil, nil
+    end
+
+    local element = elements[slot]
+    local totemName = chosen[element]
+    CastSpellByName(totemName)
+    TotemBar.recordCast(element, totemName)
+    state.index = slot
+    state.lastTime = now
+    return totemName, element
+end
+
+-- Casts ALL filled slots in a single call (Fire -> Earth -> Water ->
+-- Air). On TurtleWoW each totem element has its own cooldown, so this
+-- MAY drop all four from one keypress. Whether 4 CastSpellByName calls
+-- in one Lua frame all land (vs only the last "winning") is unverified
+-- on this client -- offered as a one-press alternative to castNext() to
+-- test in-game.
+--
+-- Intended for a macro: `/script TotemBar.castAll()`
+function TotemBar.castAll()
+    local db = TotemBarDB
+    local chosen = (db and db.chosen) or {}
+    local elements = TotemBar.TOTEM_ELEMENTS
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local totemName = chosen[element]
+        if totemName then
+            CastSpellByName(totemName)
+            TotemBar.recordCast(element, totemName)
+        end
+    end
+end
+
+-- Pure: should recallAndCastAll fire Totemic Recall this call?
+--   autoRecall off              -> false (never recall)
+--   never deployed (nil / <=0)  -> true  (nothing fresh to protect)
+--   last deploy > guard ago     -> true
+--   last deploy within guard    -> false (protect just-placed totems from a
+--                                  rapid accidental second press)
+function TotemBar.shouldRecall(autoRecall, lastDeployTime, now, guardSeconds)
+    if not autoRecall then
+        return false
+    end
+    if not lastDeployTime or lastDeployTime <= 0 then
+        return true
+    end
+    if not guardSeconds then
+        return true
+    end
+    if (now - lastDeployTime) > guardSeconds then
+        return true
+    end
+    return false
+end
+
+-- Casts Totemic Recall bypassing nampower's spell queue when that API is
+-- present. Root cause of the "place a set, it vanishes a moment later" bug:
+-- under nampower, a plain CastSpellByName of Totemic Recall (a GCD-tied
+-- instant) issued while a GCD is active is QUEUED, not cast, and pops at
+-- GCD-end -- by which time the totems are already down (TWoW gives each totem
+-- element its own non-GCD recovery category, so the 4 totems fire immediately
+-- with queue priority). The late Recall then sweeps the fresh set. Bypassing
+-- the queue means a GCD-blocked Recall simply fails that press instead of
+-- being deferred, so it can never fire late and tear the totems down. Falls
+-- back to a plain cast when nampower isn't installed (the function is nil).
+-- (KG: NP_QueueInstantSpells default 1 is the deferral; CastSpellByNameNoQueue
+-- is nampower's queue-bypass cast.)
+local function castRecallNoQueue()
+    if type(CastSpellByNameNoQueue) == "function" then
+        CastSpellByNameNoQueue("Totemic Recall")
+    else
+        CastSpellByName("Totemic Recall")
+    end
+end
+
+-- Recall-then-deploy: when TotemBarDB.autoRecall is on (the default -
+-- toggleable via the Recall button's right-click, see ui.lua), casts
+-- Totemic Recall FIRST (drops existing totems and refunds some mana)
+-- and clears own-tracking, then always places all filled slots via
+-- castAll(). One keypress = recall + redeploy (or just redeploy, with
+-- the flag off). Like castAll, relies on TurtleWoW allowing several
+-- CastSpellByName calls in one Lua frame -- verify in-game.
+--
+-- Guarded against rapid double-presses: shouldRecall() only fires Recall
+-- if the last deploy was more than DEFAULT_RECALL_GUARD seconds ago. A
+-- fast accidental second press then just re-attempts placement (a no-op,
+-- since the totems are still up and each element is on its own ~1.5s
+-- cooldown) instead of recalling the totems that were just placed.
+--
+-- Intended for a macro: `/script TotemBar.recallAndCastAll()`
+function TotemBar.recallAndCastAll()
+    local now = GetTime()
+    local autoRecall = TotemBarDB and TotemBarDB.autoRecall
+    local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
+    if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
+       and TotemBar.anyTotemOut() then
+        castRecallNoQueue()
+        TotemBar.clearActiveTotems()
+    end
+    TotemBar.castAll()
+    TotemBar.castState.lastDeployTime = now
+end
+
+-- Key-down/key-up split for the DropSet keybind. Bound in Bindings.xml with
+-- runOnUp="true", so this runs on BOTH flanks with the global `keystate` set
+-- to "down" / "up" beforehand. Casting Totemic Recall on the DOWN stroke and
+-- placing the set on the RELEASE. The real fix for the teardown is
+-- castRecallNoQueue() (see above) -- bypassing nampower's queue so a
+-- GCD-blocked Recall never fires late and sweeps the fresh set. The down/up
+-- split adds belt-and-suspenders temporal separation: the Recall on the down
+-- stroke has definitively resolved-or-failed (it is never queued) by the time
+-- the release places the set. Both flanks are real hardware events, so both
+-- may cast (Blizzard's own ActionButtonUp casts on release too), unlike a
+-- timer-deferred placement which this client blocks as a non-hardware cast.
+--
+-- Still guarded by shouldRecall()'s 2s window (a rapid re-press within the
+-- guard skips the Recall so it can't pull the just-placed set). keystate is
+-- nil only if the binding ran without runOnUp (misconfig / older client);
+-- treat nil like "up" so a single fire at least still PLACES rather than
+-- silently doing nothing.
+function TotemBar.dropSetKey(keystate)
+    if keystate == "down" then
+        local now = GetTime()
+        local autoRecall = TotemBarDB and TotemBarDB.autoRecall
+        local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
+        if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
+           and TotemBar.anyTotemOut() then
+            castRecallNoQueue()
+            TotemBar.clearActiveTotems()
+        end
+    else
+        -- Release (or nil fallback): place the set now, in this hardware frame.
+        TotemBar.castAll()
+        TotemBar.castState.lastDeployTime = GetTime()
+    end
+end
+
+-- Dev aid (/tb tdump): dumps TotemBar's own per-element cast-tracking
+-- (TotemBar.activeTotems, the resolveRemaining/resolveDuration own-tracking
+-- fallback source, see this file's header comment) side by side with the
+-- RAW GetTotemInfo(1..4) (pfUI libtotem, when present -- the OTHER,
+-- normally-authoritative source), so a "countdown missing" report can be
+-- diagnosed off-client without an in-game screenshot: did TotemBar ever
+-- record this cast at all, and what does GTI say about the same slot right
+-- now? Also appends ui.lua's TotemBar.DumpRingRenderState() output (2026-07-
+-- 16, Searing-ring bug: countdown TEXT shows but no pulse RING) -- the pure
+-- ring math was already proven correct offline, so this section captures
+-- the WoW-side render state instead: cached ring flags plus the LIVE
+-- ringFill/ringTrack texture objects (shown/texture/alpha/texCoord/parent),
+-- see that function's own comment for the full field list. Written to
+-- <WoW>\imports\tb_tdump.txt via SuperWoW's ExportFile (name WITHOUT
+-- the .txt extension -- ExportFile appends it itself); chat fallback when
+-- SuperWoW isn't present. GetTotemInfo is pcall-wrapped since it's
+-- third-party (pfUI) code this dump must never itself error on.
+function TotemBar.DumpTimerState()
+    local now = GetTime()
+    local els = TotemBar.TOTEM_ELEMENTS
+    local activeTotems = TotemBar.activeTotems
+    local out = "TotemBar timer-state dump (now=" .. tostring(now) .. ")\n"
+
+    out = out .. "\n-- own tracking (TotemBar.activeTotems) --\n"
+    for i = 1, table.getn(els) do
+        local element = els[i]
+        local rec = activeTotems[element]
+        if rec then
+            local rem = TotemBar.remaining(rec.start, rec.duration, now)
+            out = out .. element .. ": spell='" .. tostring(rec.totemName) .. "'"
+                .. " start=" .. tostring(rec.start)
+                .. " duration=" .. tostring(rec.duration)
+                .. " remaining=" .. tostring(rem) .. "\n"
+        else
+            out = out .. element .. ": (no record)\n"
+        end
+    end
+
+    out = out .. "\n-- raw GetTotemInfo(1..4) (pfUI libtotem, when present) --\n"
+    if type(GetTotemInfo) == "function" then
+        for slot = 1, 4 do
+            local ok, active, name, start, duration = pcall(GetTotemInfo, slot)
+            if ok then
+                out = out .. "slot " .. slot .. ": active=" .. tostring(active)
+                    .. " name='" .. tostring(name) .. "'"
+                    .. " start=" .. tostring(start)
+                    .. " duration=" .. tostring(duration) .. "\n"
+            else
+                out = out .. "slot " .. slot .. ": pcall error: " .. tostring(active) .. "\n"
+            end
+        end
+    else
+        out = out .. "(GetTotemInfo not present -- no pfUI libtotem loaded)\n"
+    end
+
+    -- Render-state section (ui.lua): the pure timer/duration/ring math
+    -- above was already proven correct offline for the Searing-ring
+    -- report (text shows, no ring) -- this is the other half, the
+    -- WoW-side render state (cached ring flags + LIVE texture objects)
+    -- that this dump previously never captured. pcall-wrapped: ui.lua
+    -- loads after this file (see TotemBar.toc), but by the time a player
+    -- runs /tb tdump everything is loaded; the guard just keeps this dump
+    -- from erroring if that ever isn't true (e.g. a future load-order
+    -- change) or if TotemBar.DumpRingRenderState itself hits something
+    -- unexpected.
+    local okRender, renderOut = pcall(TotemBar.DumpRingRenderState)
+    if okRender and renderOut then
+        out = out .. renderOut
+    else
+        out = out .. "\n-- render state: unavailable (" .. tostring(renderOut) .. ") --\n"
+    end
+
+    if ExportFile then
+        ExportFile("tb_tdump", out)
+    end
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("TotemBar: tdump exported.")
+    end
+end
