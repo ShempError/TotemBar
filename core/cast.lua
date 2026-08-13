@@ -124,6 +124,28 @@ function TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
     return nil
 end
 
+-- Pure: should the out-of-range red tint treat this element as ACTIVE?
+--
+-- Own tracking is the base signal. When pfUI's libtotem is present its
+-- GetTotemInfo may VETO it, so a totem DESTROYED before its timer ran out
+-- stops flashing red -- but only for a slot libtotem demonstrably tracked
+-- (gtiTracked, latched in ui.lua when GTI reported the slot active under this
+-- record's totem name). "GTI has no record for this slot" is no information,
+-- not a contradiction: libtotem keeps a single non-slot-indexed cast queue
+-- committed on ONE SPELLCAST_STOP, so a four-totem drop leaves three slots
+-- with no GTI record at all. Vetoing on those silenced both the red tint and
+-- the Recall button's out-of-range pulse for most of the set -- the same
+-- missing-GTI race resolveRemaining above already fixed for the timer path.
+function TotemBar.rangeTintActive(hasOwnRecord, hasGTI, gtiTracked, gtiActive)
+    if not hasOwnRecord then
+        return false
+    end
+    if hasGTI and gtiTracked and not gtiActive then
+        return false
+    end
+    return true
+end
+
 -- Pure: OmniCC-style text for an already-known-positive remaining
 -- seconds value: whole minutes rounded up from 60s on, plain rounded-up
 -- integer seconds below that.
@@ -221,6 +243,9 @@ function TotemBar.recordCast(element, totemName)
         totemName = totemName,
         icon = icon,
         everHadBuff = false,
+        -- Latched by ui.lua once GetTotemInfo reports this slot active under
+        -- this record's totem name; see TotemBar.rangeTintActive below.
+        gtiTracked = false,
     }
     TotemBar.activeTotems[element] = rec
     -- Sticky session evidence for confidentNoneOut() below. Deliberately NOT

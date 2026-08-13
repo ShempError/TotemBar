@@ -1402,6 +1402,12 @@ UpdateTimerDisplays = function()
                 if start and duration then
                     gtiRemaining = TotemBar.remaining(start, duration, now)
                 end
+                -- Latch: did libtotem ever report THIS record's totem active?
+                -- Only then may a later "slot inactive" veto the range tint
+                -- below (TotemBar.rangeTintActive).
+                if ownRecord and gtiActive and gtiName == ownRecord.totemName then
+                    ownRecord.gtiTracked = true
+                end
             end
 
             local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
@@ -1521,16 +1527,16 @@ UpdateTimerDisplays = function()
             -- buff whose texture matches this totem's icon?".
             --
             -- ACTIVE requires an own-tracking record (ownRecord, already
-            -- nil'd above once its stored duration expires) AND, when
-            -- pfUI's libtotem is present, GetTotemInfo(i) agreeing the
-            -- slot is still active. That second check is what keeps a
-            -- totem someone/something DESTROYED (burned, killed) before
-            -- its timer ran out from flashing red - once GTI says the
-            -- slot is gone, we just go back to normal, not red.
-            local rangeActive = (ownRecord ~= nil)
-            if rangeActive and hasGTI and not gtiActive then
-                rangeActive = false
-            end
+            -- nil'd above once its stored duration expires). pfUI's libtotem
+            -- may veto it - that is what keeps a totem someone/something
+            -- DESTROYED (burned, killed) before its timer ran out from
+            -- flashing red - but ONLY for a slot libtotem actually tracked
+            -- (gtiTracked, latched above). Its single cast queue records at
+            -- most one totem per multi-drop, so vetoing on a merely MISSING
+            -- GTI record silenced the tint and the Recall pulse for most of
+            -- a freshly dropped set. See TotemBar.rangeTintActive.
+            local rangeActive = TotemBar.rangeTintActive(ownRecord ~= nil, hasGTI,
+                ownRecord and ownRecord.gtiTracked, gtiActive)
 
             if not rangeActive then
                 if btn.tintRed then

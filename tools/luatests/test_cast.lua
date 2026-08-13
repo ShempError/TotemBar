@@ -271,4 +271,33 @@ H.run("confidentNoneOut: still blocks after clearActiveTotems (post-recall)", fu
     TotemBar.activeTotems = {}
 end)
 
+-- Out-of-range tint gate. pfUI's libtotem keeps ONE non-slot-indexed cast
+-- queue and commits it on a single SPELLCAST_STOP, so a 4-totem drop leaves
+-- three slots with no GetTotemInfo record at all. Letting a missing GTI record
+-- veto the tint silenced the red tint AND the Recall button's pulse for those
+-- slots; only a GTI record that once existed and is now GONE may veto (that is
+-- the destroyed-totem case the veto was written for).
+H.run("rangeTintActive: no own record -> never active", function()
+    H.assert_eq(TotemBar.rangeTintActive(false, true, true, 1), false, "no own record -> false")
+    H.assert_eq(TotemBar.rangeTintActive(false, false, nil, nil), false, "no own record, no GTI -> false")
+end)
+
+H.run("rangeTintActive: without libtotem, own tracking alone decides", function()
+    H.assert_eq(TotemBar.rangeTintActive(true, false, nil, nil), true, "vanilla setup -> active")
+end)
+
+H.run("rangeTintActive: a slot libtotem never recorded is NOT vetoed", function()
+    H.assert_eq(TotemBar.rangeTintActive(true, true, nil, nil), true,
+        "GTI has no record for this slot -> no information, keep own tracking")
+    H.assert_eq(TotemBar.rangeTintActive(true, true, false, nil), true,
+        "same with an explicit not-tracked flag")
+end)
+
+H.run("rangeTintActive: a slot libtotem tracked and then lost IS vetoed", function()
+    H.assert_eq(TotemBar.rangeTintActive(true, true, true, nil), false,
+        "GTI saw this totem and now reports the slot gone -> destroyed, don't flash red")
+    H.assert_eq(TotemBar.rangeTintActive(true, true, true, 1), true,
+        "GTI still reports it active -> active")
+end)
+
 H.summary()
