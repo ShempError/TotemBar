@@ -13,6 +13,18 @@ TotemBar.DEFAULT_GAP_SECONDS = 2
 -- cooldown and couldn't be re-placed).
 TotemBar.DEFAULT_RECALL_GUARD = 2
 
+-- The spell the recall paths cast. One source for the name so the guard, the
+-- cooldown lookup and the cast itself can never disagree.
+local RECALL_SPELL_NAME = "Totemic Recall"
+
+-- How long a manual Recall press that the "nothing is out" gate BLOCKED stays
+-- remembered, so a deliberate re-press can override the gate (see
+-- TotemBar.manualRecallAction). The lower bound exists so an accidental
+-- double-click cannot burn the very 6s cooldown the gate is there to save; the
+-- upper bound expires the override again.
+TotemBar.RECALL_OVERRIDE_MIN = 0.5
+TotemBar.RECALL_OVERRIDE_MAX = 5
+
 -- Default gap (px) between bar buttons. Matches ui.lua's file-scope
 -- BUTTON_GAP default; the options panel's "Button spacing" slider (range
 -- 10-30px) live-applies changes via TotemBar.SetButtonGap (ui.lua) and
@@ -568,10 +580,132 @@ end
 -- is nampower's queue-bypass cast.)
 local function castRecallNoQueue()
     if type(CastSpellByNameNoQueue) == "function" then
-        CastSpellByNameNoQueue("Totemic Recall")
+        CastSpellByNameNoQueue(RECALL_SPELL_NAME)
     else
-        CastSpellByName("Totemic Recall")
+        CastSpellByName(RECALL_SPELL_NAME)
     end
+end
+
+-- pure: does GetSpellCooldown's (start, duration) pair describe a cooldown
+-- that is RUNNING right now? 1.12 reports a live cooldown as start > 0 AND
+-- duration > 0. It reports the GLOBAL cooldown here too for a GCD-tied spell
+-- like Totemic Recall, which is exactly what we want: castRecallNoQueue above
+-- deliberately does not queue, so a GCD-blocked press simply fails -- treating
+-- it as "cannot cast" keeps this check honest about what the client will do.
+--
+-- Missing data (nil) means "no cooldown information", never "on cooldown" --
+-- FAIL OPEN, so an unreadable cooldown can never block a legitimate recall
+-- (same policy as confidentNoneOut above).
+function TotemBar.cooldownActive(start, duration)
+    if not start or not duration then
+        return false
+    end
+    return start > 0 and duration > 0
+end
+
+-- Can Totemic Recall actually be cast right now? Reads the live cooldown via
+-- the shared spellbook index cache (core/spellindex.lua). Unknowns fail OPEN --
+-- no GetSpellCooldown, no index cache at all -- so an unreadable cooldown can
+-- never block a legitimate recall.
+--
+-- "Not in the book" is deliberately NOT an unknown: it is only unknown while
+-- the scan itself is unusable. A nil index against a NON-EMPTY cached scan is
+-- KNOWN state -- the spell cannot be cast, so a press cannot have gone out --
+-- and failing open there was the same evidence-destroying bug this function
+-- exists to prevent: a shaman below level 30 has not learned Totemic Recall
+-- (learned at 30), so every press returned "cast", ran clearActiveTotems() on a
+-- still-standing set and left confidentNoneOut() saying "confidently nothing
+-- out" -- the fail-CLOSED state that gate forbids. Same non-empty-scan idiom as
+-- recordCast above: the book is not reliably populated at login and the cache
+-- is built lazily, so an EMPTY scan means "no data", not "not known".
+function TotemBar.recallReady()
+    if type(GetSpellCooldown) ~= "function" or not TotemBar.findSpellIndex then
+        return true
+    end
+    local idx = TotemBar.findSpellIndex(RECALL_SPELL_NAME)
+    if not idx then
+        return not (TotemBar.spellbookEntryCount and TotemBar.spellbookEntryCount() > 0)
+    end
+    return not TotemBar.cooldownActive(GetSpellCooldown(idx, BOOKTYPE_SPELL))
+end
+
+-- pure: what should a MANUAL Totemic Recall press do?
+--   "none-out"  the gate is confident nothing is out -> skip the cast, saving
+--               Totemic Recall's 6s cooldown.
+--   "cooldown"  Recall is not castable right now (its own 6s cooldown, a GCD,
+--               or never learned -- see recallReady) -> skip the cast AND keep
+--               the own-tracking. A recall that cannot have gone out must never
+--               destroy the evidence that the totems are still standing: the
+--               tracking is one half of confidentNoneOut's gate while
+--               castState.everCast (the other half) is sticky for the whole
+--               session, so wiping it on a refused press left the gate saying
+--               "confidently nothing out" with a full set on the ground --
+--               fail-CLOSED, the one outcome confidentNoneOut forbids.
+--   "cast"      cast it.
+--
+-- The override exists for the same reason: any state where a totem is out but
+-- UNTRACKED still trips the gate -- e.g. a totem dropped from the action bar
+-- on a client without pfUI's GetTotemInfo (1.12 cannot read an action slot's
+-- spell, see the UseAction note above). So the gate is never a dead end: a
+-- DELIBERATE re-press after a blocked one lets the recall through. The
+-- overrideMin/Max window separates that from an accidental double-click and
+-- expires the override again for the next, unrelated press.
+function TotemBar.manualRecallAction(noneOut, ready, lastBlockedAt, now, overrideMin, overrideMax)
+    if noneOut then
+        local override = false
+        if lastBlockedAt and overrideMin and overrideMax then
+            local since = now - lastBlockedAt
+            override = (since >= overrideMin) and (since <= overrideMax)
+        end
+        if not override then
+            return "none-out"
+        end
+    end
+    if not ready then
+        return "cooldown"
+    end
+    return "cast"
+end
+
+-- The ONE manual-recall implementation, shared by the Recall button's
+-- left-click (ui.lua) and the TOTEMBAR_RECALL keybind (bind.lua) so the two
+-- can never drift apart again. Returns the action taken ("none-out" /
+-- "cooldown" / "cast"); the callers own the chat feedback.
+--
+-- Casts through castRecallNoQueue exactly like the auto paths: a plain
+-- CastSpellByName here was queueable under nampower, so a manual press during
+-- a GCD could pop AFTER the next set was placed and sweep it away -- the very
+-- teardown that helper exists to prevent.
+function TotemBar.manualRecall()
+    local now = GetTime()
+    local noneOut = TotemBar.confidentNoneOut and TotemBar.confidentNoneOut()
+    local action = TotemBar.manualRecallAction(noneOut, TotemBar.recallReady(),
+        TotemBar.castState.recallBlockedAt, now,
+        TotemBar.RECALL_OVERRIDE_MIN, TotemBar.RECALL_OVERRIDE_MAX)
+
+    if action == "none-out" then
+        -- Remember the refusal so a deliberate re-press can override it.
+        TotemBar.castState.recallBlockedAt = now
+        return action
+    end
+    if action == "cooldown" then
+        -- Deliberately KEEPS recallBlockedAt: this press was refused by the
+        -- client, not by the gate, so an override the player already expressed
+        -- must survive a transient cooldown/GCD instead of costing them another
+        -- paired press once it clears.
+        return action
+    end
+
+    TotemBar.castState.recallBlockedAt = nil
+    castRecallNoQueue()
+    -- The refund learner's snapshot runs AFTER the cast but BEFORE the wipe:
+    -- it sums the cost of the totems still held in activeTotems.
+    if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
+    -- Totemic Recall drops every active totem at once; clear own-tracking so
+    -- the icons' countdowns disappear too (GetTotemInfo, if present, will also
+    -- reflect this).
+    TotemBar.clearActiveTotems()
+    return action
 end
 
 -- Recall-then-deploy: when TotemBarDB.autoRecall is on (the default -
@@ -588,13 +722,18 @@ end
 -- since the totems are still up and each element is on its own ~1.5s
 -- cooldown) instead of recalling the totems that were just placed.
 --
+-- Also gated on recallReady(): a Recall the client cannot cast right now (its
+-- own 6s cooldown, or a GCD -- castRecallNoQueue never defers, so such a press
+-- just fails) must not run clearActiveTotems() either, or it wipes the timers
+-- of totems that are still standing.
+--
 -- Intended for a macro: `/script TotemBar.recallAndCastAll()`
 function TotemBar.recallAndCastAll()
     local now = GetTime()
     local autoRecall = TotemBarDB and TotemBarDB.autoRecall
     local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
     if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
-       and TotemBar.anyTotemOut() then
+       and TotemBar.recallReady() and TotemBar.anyTotemOut() then
         castRecallNoQueue()
         TotemBar.clearActiveTotems()
     end
@@ -625,7 +764,7 @@ function TotemBar.dropSetKey(keystate)
         local autoRecall = TotemBarDB and TotemBarDB.autoRecall
         local guard = (TotemBarDB and TotemBarDB.recallGuardSeconds) or TotemBar.DEFAULT_RECALL_GUARD
         if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
-           and TotemBar.anyTotemOut() then
+           and TotemBar.recallReady() and TotemBar.anyTotemOut() then
             castRecallNoQueue()
             TotemBar.clearActiveTotems()
         end
