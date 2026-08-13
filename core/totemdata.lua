@@ -45,6 +45,24 @@ TotemBar.TOTEMS_BY_ELEMENT = {
     },
 }
 
+-- Pure: the largest number of totems any single element offers. ui.lua sizes
+-- the hover flyout's icon pool from this. Computed from the data on purpose:
+-- the pool used to be a hard-coded 6, but Air has SEVEN totems, and with the
+-- Air slot empty the flyout lists ALL known totems of the element (not "all
+-- minus the chosen default") -- so the 7th, Tranquil Air Totem, was silently
+-- dropped and could not be cast or made default from the bar.
+function TotemBar.maxTotemsPerElement()
+    local maxN = 0
+    for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+        local list = TotemBar.TOTEMS_BY_ELEMENT[TotemBar.TOTEM_ELEMENTS[i]]
+        local n = (list and table.getn(list)) or 0
+        if n > maxN then
+            maxN = n
+        end
+    end
+    return maxN
+end
+
 -- Build the reverse lookup (totem name -> element) once at load time.
 local elementByName = {}
 for elemIdx = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do

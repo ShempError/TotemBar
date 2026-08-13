@@ -172,7 +172,11 @@ local anyOutOfRange = false
 -- cast it ONCE without changing the slot's default; right-click one to
 -- make it the slot's new default. Shares one frame + a pool of icon
 -- buttons.
-local MAX_FLYOUT_ICONS = 6         -- most totems any single element has
+-- Computed from the static totem map, not hard-coded: Air has SEVEN totems,
+-- and a hard-coded 6 silently dropped the last one (Tranquil Air Totem)
+-- whenever the Air slot was empty -- the flyout then lists ALL known totems of
+-- the element, not "all minus the chosen default".
+local MAX_FLYOUT_ICONS = TotemBar.maxTotemsPerElement()   -- most totems any single element has
 local FLYOUT_PAD = 4               -- inner padding inside the flyout frame
 local FLYOUT_GAP = 2               -- gap between element button top and flyout bottom
 local FLYOUT_HIDE_INTERVAL = 0.1   -- throttle for the mouse-leave hide check
