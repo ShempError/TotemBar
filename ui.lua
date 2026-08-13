@@ -1226,21 +1226,22 @@ CreateRecallButton = function(index)
                 ChatOut:AddMessage("TotemBar: auto-recall before setting OFF")
             end
             RefreshRecallIndicator()
-        elseif TotemBar.confidentNoneOut and TotemBar.confidentNoneOut() then
-            -- Confidently nothing out (tracked this session, all expired): don't waste
-            -- Totemic Recall's 6s cooldown on a no-op cast. After a /reload the tracking is
-            -- empty and 1.12 can't re-detect a pre-reload totem, so confidentNoneOut fails
-            -- open there and the recall goes through the else branch below (see core/cast.lua).
-            ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown).")
         else
-            -- Snapshot for the refund learner runs AFTER the cast: activeTotems
-            -- is still populated here (clearActiveTotems runs last).
-            CastSpellByName(RECALL_SPELL_NAME)
-            if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
-            -- Totemic Recall drops every active totem at once; clear our
-            -- own-tracking timers so the icons' countdowns disappear too
-            -- (GetTotemInfo, if present, will also reflect this).
-            TotemBar.clearActiveTotems()
+            -- Shared with the TOTEMBAR_RECALL keybind (bind.lua) so the two manual
+            -- paths cannot drift apart: TotemBar.manualRecall does the gate, the
+            -- cooldown check, the queue-safe cast, the refund snapshot and the
+            -- own-tracking wipe (see core/cast.lua). Only the chat feedback is ours.
+            local action = TotemBar.manualRecall()
+            if action == "none-out" then
+                -- Confidently nothing out (cast something this session, all expired):
+                -- don't waste Totemic Recall's 6s cooldown on a no-op cast. After a
+                -- /reload the session flag is clear and 1.12 can't re-detect a pre-reload
+                -- totem, so the gate fails open there. Pressing again also overrides it,
+                -- for a totem we cannot see (e.g. dropped from the action bar).
+                ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown). Press again to recall anyway.")
+            elseif action == "cooldown" then
+                ChatOut:AddMessage("TotemBar: Totemic Recall isn't ready yet - totem timers kept.")
+            end
         end
     end)
 

@@ -62,20 +62,22 @@ function TotemBar.CastElement(element)
     end
 end
 
--- Cast Totemic Recall and clear own-tracking (mirrors the Recall button).
+-- Cast Totemic Recall and clear own-tracking. Runs the exact same
+-- TotemBar.manualRecall (core/cast.lua) as the Recall button's left-click, so
+-- the keybind and the button can never diverge: it owns the "nothing is out"
+-- gate, the "is Recall even castable right now" check (a press that cannot go
+-- out must NOT wipe the timers of totems still standing), the queue-safe cast
+-- that keeps nampower from firing a late Recall into a fresh set, the refund
+-- snapshot and the own-tracking wipe. Only the chat feedback lives here.
 function TotemBar.CastRecall()
-    -- Don't waste Totemic Recall's 6s cooldown when nothing is out -- but only block when we
-    -- are CONFIDENT of that (tracked totems this session, all expired). After a /reload the
-    -- tracking is empty and 1.12 has no way to re-detect a pre-reload totem, so confidentNoneOut
-    -- fails open there and lets the recall through (see core/cast.lua).
-    if TotemBar.confidentNoneOut and TotemBar.confidentNoneOut() then
-        ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown).")
+    if not TotemBar.manualRecall then
         return
     end
-    CastSpellByName("Totemic Recall")
-    if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
-    if TotemBar.clearActiveTotems then
-        TotemBar.clearActiveTotems()
+    local action = TotemBar.manualRecall()
+    if action == "none-out" then
+        ChatOut:AddMessage("TotemBar: no totems out - not recalling (saves the 6s cooldown). Press again to recall anyway.")
+    elseif action == "cooldown" then
+        ChatOut:AddMessage("TotemBar: Totemic Recall isn't ready yet - totem timers kept.")
     end
 end
 
