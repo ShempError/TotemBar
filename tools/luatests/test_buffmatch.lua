@@ -49,4 +49,34 @@ H.run("buffTexturesMatch: empty buff list returns false", function()
     H.assert_eq(TotemBar.buffTexturesMatch({}, "Interface\\Icons\\Spell_Nature_Windfury"), false, "empty buff list -> false")
 end)
 
+-- Icon names that are a strict PREFIX of another totem's icon must not match.
+-- 1.12 has exactly such a pair: Windwall Totem = Spell_Nature_EarthBind,
+-- Strength of Earth Totem = Spell_Nature_EarthBindTotem. A substring search
+-- reported "Windwall is buffing me" whenever the player carried the Strength
+-- of Earth buff, so the Air slot never turned red out of range.
+H.run("buffTexturesMatch: a longer buff icon name does NOT match a shorter totem icon", function()
+    local buffs = {
+        "Interface\\Icons\\Ability_Warrior_BattleShout",
+        "Interface\\Icons\\Spell_Nature_EarthBindTotem",   -- Strength of Earth
+    }
+    H.assert_eq(TotemBar.buffTexturesMatch(buffs, "Interface\\Icons\\Spell_Nature_EarthBind"), false,
+        "Strength of Earth's buff must not match Windwall's icon")
+    H.assert_eq(TotemBar.buffTexturesMatch(buffs, "Interface\\Icons\\Spell_Nature_EarthBindTotem"), true,
+        "the real owner still matches")
+end)
+
+H.run("buffTexturesMatch: a shorter buff icon name does NOT match a longer totem icon", function()
+    local buffs = { "Interface\\Icons\\Spell_Nature_EarthBind" }
+    H.assert_eq(TotemBar.buffTexturesMatch(buffs, "Interface\\Icons\\Spell_Nature_EarthBindTotem"), false,
+        "prefix collision blocked in both directions")
+end)
+
+H.run("buffTexturesMatch: differing path prefixes still match on the icon name", function()
+    local buffs = { "Interface\\Icons\\Spell_Nature_Windfury" }
+    H.assert_eq(TotemBar.buffTexturesMatch(buffs, "Spell_Nature_Windfury"), true,
+        "bare icon name matches a full path (path tolerance kept)")
+    H.assert_eq(TotemBar.buffTexturesMatch({ "Spell_Nature_Windfury" }, "Interface\\Icons\\Spell_Nature_Windfury"), true,
+        "and the other way round")
+end)
+
 H.summary()

@@ -312,20 +312,39 @@ end
 local buffScratch = {}
 local buffScratchLen = 0
 
+-- Pure: the final path component of a texture path, lowercased -- i.e. the
+-- bare icon name. Keeps the case/prefix tolerance the comparison below needs
+-- (GetSpellTexture and UnitBuff don't have to return identically-spelled
+-- paths) without the false positives of a substring search.
+local function textureTail(path)
+    local s = string.lower(path)
+    local _, sep = string.find(s, ".*[\\/]")
+    if sep then
+        return string.sub(s, sep + 1)
+    end
+    return s
+end
+
 -- Pure: given a flat array of buff texture path strings (some entries
 -- may be nil) and a totem spell's icon texture path, returns true if
--- any buff texture matches iconPath via a case-insensitive literal
--- substring search (tolerates path/casing differences between
--- GetSpellTexture's and UnitBuff's returned strings). Returns false if
--- iconPath or buffTexList is nil, or nothing matches.
+-- any buff's ICON NAME equals iconPath's, case-insensitively and
+-- independent of the leading path. Returns false if iconPath or
+-- buffTexList is nil, or nothing matches.
+--
+-- Compares the trailing path component for EQUALITY, not containment: a
+-- substring search let any icon name that merely starts with the totem's
+-- count as a match, and 1.12 ships exactly such a pair -- Windwall Totem is
+-- Spell_Nature_EarthBind, Strength of Earth Totem is
+-- Spell_Nature_EarthBindTotem. Carrying the Strength of Earth buff therefore
+-- made Windwall look permanently in range, so its slot never turned red.
 function TotemBar.buffTexturesMatch(buffTexList, iconPath)
     if not iconPath or not buffTexList then
         return false
     end
-    local needle = string.lower(iconPath)
+    local needle = textureTail(iconPath)
     for i = 1, table.getn(buffTexList) do
         local tex = buffTexList[i]
-        if tex and string.find(string.lower(tex), needle, 1, true) then
+        if tex and textureTail(tex) == needle then
             return true
         end
     end
