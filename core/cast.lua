@@ -199,6 +199,18 @@ function TotemBar.recordCast(element, totemName)
     local idx = TotemBar.findSpellIndex(totemName)
     if idx then
         icon = GetSpellTexture(idx, BOOKTYPE_SPELL)
+    elseif TotemBar.spellbookEntryCount and TotemBar.spellbookEntryCount() > 0 then
+        -- The spell is provably NOT in this character's spellbook, so the cast
+        -- that just went out was a guaranteed no-op -- don't start a full-length
+        -- phantom countdown (and a true anyTotemOut(), which then burns Totemic
+        -- Recall's 6s cooldown on an empty board). Reachable because
+        -- TotemBarDB is account-wide: a chosen set carried over from another
+        -- shaman lands on an alt that hasn't learned those totems.
+        -- Guarded on a NON-EMPTY spellbook scan on purpose: the index cache is
+        -- built lazily and the book isn't reliably populated at login, so an
+        -- empty scan means "no data", not "not known" -- fail OPEN there,
+        -- exactly like confidentNoneOut's unknown-state policy below.
+        return
     end
     local rec = {
         start = GetTime(),

@@ -154,6 +154,32 @@ H.run("scanSpellbook: flat name list, ONE ENTRY PER SLOT (ranks not collapsed)",
     BOOKTYPE_SPELL = nil
 end)
 
+-- Lets a caller tell "this spell is provably NOT in the spellbook" apart from
+-- "the cached scan has no usable data yet" (the book isn't reliably populated
+-- at login). core/cast.lua's recordCast uses it to fail OPEN rather than
+-- suppress a legitimate totem's timer.
+H.run("spellbookEntryCount: reports the cached scan's size", function()
+    local book = {
+        [1] = { "Searing Totem", "Rank 1" },
+        [2] = { "Stoneskin Totem", "Rank 1" },
+    }
+    GetSpellName = function(i, bt)
+        local e = book[i]
+        if not e then return nil end
+        return e[1], e[2]
+    end
+    BOOKTYPE_SPELL = "spell"
+    TotemBar.invalidateSpellIndex()
+    H.assert_eq(TotemBar.spellbookEntryCount(), 2, "two spellbook slots")
+
+    GetSpellName = function() return nil end
+    TotemBar.invalidateSpellIndex()
+    H.assert_eq(TotemBar.spellbookEntryCount(), 0, "empty/unpopulated spellbook -> 0")
+
+    GetSpellName = nil
+    BOOKTYPE_SPELL = nil
+end)
+
 H.run("findSpellIndex/findHighestRankSlot/highestKnownRank: nil name -> nil, no scan", function()
     TotemBar.invalidateSpellIndex()
     local scanned = false

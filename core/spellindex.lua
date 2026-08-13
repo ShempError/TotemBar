@@ -113,6 +113,16 @@ function TotemBar.getSpellIndex()
     return cachedIndex
 end
 
+-- How many spellbook slots the cached scan holds (0 when the book was empty
+-- at scan time). Lets a caller tell "this spell is provably NOT known" apart
+-- from "we have no usable spellbook data yet" -- the book isn't reliably
+-- populated at login, and the cache is built lazily, so a nil findSpellIndex
+-- alone can't distinguish the two. Used by core/cast.lua's recordCast.
+function TotemBar.spellbookEntryCount()
+    ensureBuilt()
+    return table.getn(cachedEntries)
+end
+
 -- Mirrors old FindSpellIndexByName (ui.lua) / findSpellIndexByName
 -- (cast.lua): first-match spellbook slot, or nil if unknown.
 function TotemBar.findSpellIndex(name)
