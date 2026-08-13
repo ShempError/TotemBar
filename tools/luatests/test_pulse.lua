@@ -208,4 +208,29 @@ H.run("timeColor: traffic-light color for a remaining-time fraction", function()
     H.assert_eq(rnd(b), 0.10, "frac=-0.2 clamps like 0 -> b")
 end)
 
+-- Pulse phase re-anchoring: the periodic-gain chat lines carry NO caster, so a
+-- second shaman's identically-named totem produces the exact same string as
+-- our own. Accepting every one of them re-stamped the anchor off-beat roughly
+-- twice per interval. Rate-limit to at most one anchor per interval instead.
+H.run("shouldAnchorPulse: first observed gain always anchors", function()
+    H.assert_eq(TotemBar.shouldAnchorPulse(nil, 2.0, 100), true, "no anchor yet -> anchor")
+    H.assert_eq(TotemBar.shouldAnchorPulse(nil, nil, 100), true, "no interval known -> anchor")
+end)
+
+H.run("shouldAnchorPulse: rejects a foreign tick inside our own interval", function()
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 2.0, 101), false, "1s into a 2s interval -> reject")
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 2.0, 100.4), false, "just after our own tick -> reject")
+end)
+
+H.run("shouldAnchorPulse: accepts our own next tick (incl. slight early jitter)", function()
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 2.0, 102), true, "a full interval later -> anchor")
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 2.0, 101.8), true, "0.2s early still within tolerance")
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 2.0, 105), true, "long gap (recast/out of range) -> anchor")
+end)
+
+H.run("shouldAnchorPulse: degenerate interval never blocks", function()
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, 0, 100), true, "interval 0 -> anchor")
+    H.assert_eq(TotemBar.shouldAnchorPulse(100, -1, 100), true, "negative interval -> anchor")
+end)
+
 H.summary()

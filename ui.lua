@@ -2534,7 +2534,15 @@ eventFrame:SetScript("OnEvent", function()
             local element = TotemBar.elementOf(totemName)
             local rec = element and TotemBar.activeTotems[element]
             if rec and rec.totemName == totemName then
-                rec.pulseAnchor = GetTime()
+                -- These lines carry no caster, so another shaman's
+                -- identically-named totem is indistinguishable from ours.
+                -- Accept at most one anchor per pulse interval so a foreign
+                -- tick train can't drag our phase off-beat.
+                local pd = TotemBar.pulseInfo(totemName)
+                local nowGain = GetTime()
+                if TotemBar.shouldAnchorPulse(rec.pulseAnchor, pd and pd.interval, nowGain) then
+                    rec.pulseAnchor = nowGain
+                end
             end
         end
     end

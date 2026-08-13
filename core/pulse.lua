@@ -24,6 +24,30 @@ function TotemBar.pulseRatio(placedAt, anchorAt, interval, now)
     return math.mod(elapsed, interval) / interval
 end
 
+-- How far before the predicted next tick an observed gain may still re-anchor
+-- the phase (seconds) -- absorbs normal message/latency jitter.
+TotemBar.PULSE_ANCHOR_TOLERANCE = 0.25
+
+-- Pure: may an observed periodic self-gain re-anchor this record's pulse phase?
+--
+-- The periodic-gain chat lines carry NO caster (1.12's ownerless
+-- POWERGAIN/PERIODICAURAHEAL ...SELFSELF templates), so a second shaman's
+-- identically-named totem produces byte-identical text to our own. Accepting
+-- every message re-stamped the anchor off-beat, roughly twice per interval,
+-- and the ripple/pulse arc jumped backwards. Rate-limiting to at most one
+-- anchor per interval locks the display onto ONE tick train instead. A record
+-- with no anchor yet (fresh cast) always gets its free first stamp, so a
+-- recast re-acquires phase immediately.
+function TotemBar.shouldAnchorPulse(lastAnchor, interval, now)
+    if not lastAnchor or not now then
+        return true
+    end
+    if not interval or interval <= 0 then
+        return true
+    end
+    return (now - lastAnchor) >= (interval - TotemBar.PULSE_ANCHOR_TOLERANCE)
+end
+
 -- 0..1 single fill from placement to detonation (Fire Nova). Clamped at
 -- both ends; callers treat >=1 as "detonated" and hide the bar.
 function TotemBar.oneshotRatio(placedAt, delay, now)
