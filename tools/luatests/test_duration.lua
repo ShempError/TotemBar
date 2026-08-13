@@ -48,8 +48,31 @@ H.run("totemDuration: flat durations for listed totems", function()
     H.assert_eq(TotemBar.totemDuration("Windwall Totem"), 120, "Windwall Totem")
 end)
 
+-- Sentry Totem used to be missing from TOTEM_DURATIONS entirely, so it fell
+-- through to the 120s default while the real totem stands for 5 minutes. The
+-- fallback is documented as a safe OVERestimate; for Sentry it was a 180s
+-- UNDERestimate, and pfUI's libtotem has no Sentry entry either, so nothing
+-- could correct it.
+H.run("totemDuration: Sentry Totem is 5 minutes, not the 120s fallback", function()
+    H.assert_eq(TotemBar.totemDuration("Sentry Totem"), 300, "Sentry Totem lasts 300s")
+end)
+
+H.run("totemDuration: every totem in the static map has a real duration entry", function()
+    local missing = nil
+    for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+        local list = TotemBar.TOTEMS_BY_ELEMENT[TotemBar.TOTEM_ELEMENTS[i]]
+        for j = 1, table.getn(list) do
+            local name = list[j]
+            -- Searing Totem is rank-aware and intentionally not in the flat table.
+            if name ~= "Searing Totem" and not TotemBar.TOTEM_DURATIONS[name] then
+                missing = missing or name
+            end
+        end
+    end
+    H.assert_eq(missing, nil, "no offered totem silently falls back to DEFAULT_TOTEM_DURATION")
+end)
+
 H.run("totemDuration: unknown totem name defaults to 120", function()
-    H.assert_eq(TotemBar.totemDuration("Sentry Totem"), 120, "Sentry Totem not in table -> default 120")
     H.assert_eq(TotemBar.totemDuration("Totally Made Up Totem"), 120, "made-up name -> default 120")
     H.assert_eq(TotemBar.totemDuration(nil), 120, "nil name -> default 120")
 end)

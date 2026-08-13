@@ -110,6 +110,12 @@ TotemBar.TOTEM_DURATIONS = {
     ["Grounding Totem"] = 45,
     ["Grace of Air Totem"] = 120,
     ["Nature Resistance Totem"] = 120,
+    -- 5 minutes (spell 6495, TurtleWoW 1.17.2 spell DB). Was missing here
+    -- entirely and fell through to the 120s default -- but that fallback is
+    -- meant as a safe OVERestimate, and for Sentry it cut the timer 180s
+    -- short. pfUI's libtotem has no Sentry entry either, so GetTotemInfo
+    -- could not correct it.
+    ["Sentry Totem"] = 300,
     ["Tranquil Air Totem"] = 120,
     ["Windfury Totem"] = 120,
     ["Windwall Totem"] = 120,
