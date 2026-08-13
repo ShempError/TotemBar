@@ -212,19 +212,63 @@ H.run("hasTrackedTotems: nil/empty -> false, any record -> true", function()
     H.assert_eq(TotemBar.hasTrackedTotems({ Air = { start = 1, duration = 2 } }, el), true, "record on any element -> true")
 end)
 
-H.run("confidentNoneOut: fail-open when tracking empty; blocks only tracked+expired", function()
+H.run("confidentNoneOut: fail-open before any cast; blocks only after a cast with nothing out", function()
     local savedGetTime = GetTime
     GetTime = function() return 1000 end
 
+    TotemBar.castState.everCast = nil
     TotemBar.activeTotems = {}
-    H.assert_eq(TotemBar.confidentNoneOut(), false, "empty tracking (post-/reload) -> fail-open, don't block")
+    H.assert_eq(TotemBar.confidentNoneOut(), false, "nothing cast this session (post-/reload) -> fail-open, don't block")
 
+    TotemBar.castState.everCast = true
     TotemBar.activeTotems = { Fire = { start = 999, duration = 60 } }   -- rem = 59 > 0
-    H.assert_eq(TotemBar.confidentNoneOut(), false, "tracked + still active -> don't block")
+    H.assert_eq(TotemBar.confidentNoneOut(), false, "cast + still active -> don't block")
 
     TotemBar.activeTotems = { Fire = { start = 900, duration = 60 } }   -- rem = -40 <= 0
-    H.assert_eq(TotemBar.confidentNoneOut(), true, "tracked + all expired -> confidently none out -> block")
+    H.assert_eq(TotemBar.confidentNoneOut(), true, "cast + all expired -> confidently none out -> block")
 
     GetTime = savedGetTime
+    TotemBar.castState.everCast = nil
     TotemBar.activeTotems = {}
 end)
+
+-- The session evidence must NOT be the activeTotems table's occupancy:
+-- ui.lua's 0.1s timer tick hard-EVICTS each record the moment it expires
+-- (ui.lua "activeTotems[element] = nil"), and clearActiveTotems() wipes the
+-- whole table after every successful Totemic Recall. Deriving "we cast
+-- something this session" from occupancy therefore made the gate fall open
+-- again ~0.1s after the last totem ran out -- i.e. it only ever worked while
+-- the bar was HIDDEN (no OnUpdate, no eviction), the exact inverse of intent.
+H.run("confidentNoneOut: still blocks after the UI tick evicted the expired record", function()
+    local savedGetTime = GetTime
+    GetTime = function() return 1000 end
+
+    TotemBar.castState.everCast = true
+    TotemBar.activeTotems = { Fire = { start = 900, duration = 55 } }
+    H.assert_eq(TotemBar.confidentNoneOut(), true, "expired but not yet evicted -> block")
+
+    TotemBar.activeTotems.Fire = nil   -- what UpdateTimerDisplays does on expiry
+    H.assert_eq(TotemBar.confidentNoneOut(), true, "STILL blocks after eviction")
+
+    GetTime = savedGetTime
+    TotemBar.castState.everCast = nil
+    TotemBar.activeTotems = {}
+end)
+
+H.run("confidentNoneOut: still blocks after clearActiveTotems (post-recall)", function()
+    local savedGetTime = GetTime
+    GetTime = function() return 1000 end
+
+    TotemBar.castState.everCast = true
+    TotemBar.activeTotems = { Fire = { start = 999, duration = 60 } }
+    H.assert_eq(TotemBar.confidentNoneOut(), false, "totem out -> a second press must go through")
+
+    TotemBar.clearActiveTotems()
+    H.assert_eq(TotemBar.confidentNoneOut(), true, "after the recall cleared tracking -> block the no-op repeat")
+
+    GetTime = savedGetTime
+    TotemBar.castState.everCast = nil
+    TotemBar.activeTotems = {}
+end)
+
+H.summary()

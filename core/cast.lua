@@ -223,6 +223,11 @@ function TotemBar.recordCast(element, totemName)
         everHadBuff = false,
     }
     TotemBar.activeTotems[element] = rec
+    -- Sticky session evidence for confidentNoneOut() below. Deliberately NOT
+    -- derived from activeTotems' occupancy: ui.lua's timer tick evicts each
+    -- record the moment it expires, and clearActiveTotems() wipes the table
+    -- after every recall.
+    TotemBar.castState.everCast = true
 end
 
 -- Records a totem cast caught by the universal CastSpellByName/CastSpell
@@ -409,9 +414,10 @@ function TotemBar.anyTotemOut()
 end
 
 -- pure: does the addon currently hold ANY tracked totem record (regardless of expiry)?
--- TotemBar.activeTotems is an in-memory table cleared to {} on load (see top of this file,
--- NOT persisted to SavedVariables), so a non-empty table proves we have cast at least one
--- totem THIS session and can reason about whether it is still out.
+-- NOTE: this is NOT the recall gate's session evidence any more -- see
+-- confidentNoneOut below. Table occupancy cannot answer "did we cast something this
+-- session": ui.lua's 0.1s timer tick EVICTS each record the moment it expires, and
+-- clearActiveTotems() wipes the whole table after every recall.
 function TotemBar.hasTrackedTotems(activeTotems, elements)
     if not activeTotems then return false end
     for i = 1, table.getn(elements) do
@@ -430,8 +436,16 @@ end
 -- totems out" and blocking a legitimate recall of a still-standing totem (the bug this fixes:
 -- our reloads wiped the tracking while the totems stayed physically out). Worst case of
 -- fail-open is one needless recall right after a reload -- far cheaper than a blocked one.
+--
+-- The "cast something this session" half reads the STICKY castState.everCast flag set in
+-- recordCast, not the occupancy of activeTotems. Occupancy was the original evidence and it
+-- was wrong: ui.lua's 0.1s tick deletes a record the moment it expires and clearActiveTotems()
+-- empties the table after every recall, so the gate fell open again ~0.1s after the last totem
+-- ran out -- it only ever blocked while the bar was HIDDEN (hidden frame, no OnUpdate, no
+-- eviction), the exact inverse of the intent above. castState is in-memory like activeTotems,
+-- so a /reload still resets it to the fail-open state.
 function TotemBar.confidentNoneOut()
-    if not TotemBar.hasTrackedTotems(TotemBar.activeTotems, TotemBar.TOTEM_ELEMENTS) then
+    if not TotemBar.castState.everCast then
         return false
     end
     return not TotemBar.anyTotemOut()
