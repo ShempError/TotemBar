@@ -105,6 +105,21 @@ function TotemBar.isHelpfulTotem(name)
     return true
 end
 
+-- Pure: brings a pfUI-libtotem-reported duration onto the same scale as the
+-- one recordCast stores. libtotem serves FLAT book durations; own tracking
+-- applies Totemic Mastery's +20% to helpful totems. ui.lua's timer prefers
+-- libtotem while it reports the slot active and falls back to own tracking
+-- once libtotem evicts it -- so at the book duration the display flipped
+-- source and the countdown jumped back UP (...3, 2, 1, 24) with the duration
+-- ring re-filling, instead of running out. Scaling both sides by the same
+-- factor makes them agree on the endpoint.
+function TotemBar.gtiDurationWithMastery(gtiDuration, gtiName, hasMastery)
+    if not gtiDuration then
+        return nil
+    end
+    return TotemBar.durationWithMastery(gtiDuration, TotemBar.isHelpfulTotem(gtiName), hasMastery)
+end
+
 -- ===== WoW-API layer (not offline-executed) =====
 
 -- TotemBar.findHighestRankSlot(name) used to be defined here as its own

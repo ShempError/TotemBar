@@ -1398,9 +1398,15 @@ UpdateTimerDisplays = function()
                 gtiActive = active
                 gtiName = tname
                 gtiStart = start
-                gtiDuration = duration
-                if start and duration then
-                    gtiRemaining = TotemBar.remaining(start, duration, now)
+                -- Mastery parity: libtotem reports FLAT book durations, own
+                -- tracking stores the Totemic Mastery-inflated one. Without
+                -- scaling GTI by the same factor the timer flips source at the
+                -- book duration and the countdown jumps back UP instead of
+                -- running out (see TotemBar.gtiDurationWithMastery).
+                gtiDuration = TotemBar.gtiDurationWithMastery(duration, tname,
+                    TotemBar.hasTotemicMastery and TotemBar.hasTotemicMastery())
+                if start and gtiDuration then
+                    gtiRemaining = TotemBar.remaining(start, gtiDuration, now)
                 end
                 -- Latch: did libtotem ever report THIS record's totem active?
                 -- Only then may a later "slot inactive" veto the range tint
@@ -1798,9 +1804,13 @@ function TotemBar.DumpRingRenderState()
             if hasGTI then
                 local ok, active, tname, start, duration = pcall(GetTotemInfo, i)
                 if ok then
-                    gtiActive, gtiDuration = active, duration
-                    if start and duration then
-                        gtiRemaining = TotemBar.remaining(start, duration, now)
+                    -- Same mastery scaling UpdateTimerDisplays applies, so this
+                    -- dump keeps reporting what the render path would compute.
+                    gtiActive = active
+                    gtiDuration = TotemBar.gtiDurationWithMastery(duration, tname,
+                        TotemBar.hasTotemicMastery and TotemBar.hasTotemicMastery())
+                    if start and gtiDuration then
+                        gtiRemaining = TotemBar.remaining(start, gtiDuration, now)
                     end
                 end
             end

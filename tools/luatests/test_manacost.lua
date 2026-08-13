@@ -101,4 +101,31 @@ H.run("findHighestRankSlot: exported + picks highest rank, not first match", fun
     BOOKTYPE_SPELL = nil
 end)
 
+-- recordCast stores the Totemic Mastery-inflated duration while pfUI's
+-- libtotem reports the FLAT book value. The timer prefers libtotem while it
+-- reports the slot active and falls back to own tracking once libtotem evicts
+-- it -- so at the book duration the display flipped source and the countdown
+-- jumped back UP (...3, 2, 1, 24) instead of running out. Scaling libtotem's
+-- duration by the same factor keeps both sources commensurate.
+H.run("gtiDurationWithMastery: scales a libtotem duration like own tracking does", function()
+    H.assert_eq(TotemBar.gtiDurationWithMastery(120, "Stoneskin Totem", true), 144, "helpful totem + mastery -> +20%")
+    H.assert_eq(TotemBar.gtiDurationWithMastery(120, "Stoneskin Totem", false), 120, "no mastery -> unchanged")
+    H.assert_eq(TotemBar.gtiDurationWithMastery(55, "Searing Totem", true), 55, "damage totem gets no bonus")
+    H.assert_eq(TotemBar.gtiDurationWithMastery(nil, "Stoneskin Totem", true), nil, "nil duration -> nil")
+end)
+
+H.run("gtiDurationWithMastery: agrees with recordCast's own stored duration", function()
+    local names = { "Stoneskin Totem", "Windfury Totem", "Searing Totem", "Magma Totem", "Mana Spring Totem" }
+    local mismatch = nil
+    for i = 1, table.getn(names) do
+        local name = names[i]
+        local base = TotemBar.totemDuration(name)
+        local own = TotemBar.durationWithMastery(base, TotemBar.isHelpfulTotem(name), true)
+        if TotemBar.gtiDurationWithMastery(base, name, true) ~= own then
+            mismatch = mismatch or name
+        end
+    end
+    H.assert_eq(mismatch, nil, "both sources land on the same endpoint for every totem")
+end)
+
 H.summary()
