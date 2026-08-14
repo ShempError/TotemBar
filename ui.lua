@@ -195,6 +195,7 @@ local RefreshCooldown
 local EnsureFlyoutFrame
 local ShowFlyout
 local RefreshFlyoutCooldowns
+local RefreshFlyoutMana
 local HideFlyout
 local OnFlyoutUpdate
 local CreateElementButton
@@ -671,6 +672,7 @@ ShowFlyout = function(button, element)
     if TotemBar.refreshBindOverlays then
         TotemBar.refreshBindOverlays()
     end
+    RefreshFlyoutMana()
 end
 
 -- Re-drives the cooldown swipe on every CURRENTLY-SHOWN pooled flyout
@@ -698,6 +700,33 @@ RefreshFlyoutCooldowns = function()
     end
 end
 
+-- Dims every shown flyout icon the player cannot currently afford, on the same
+-- rule as the bar buttons (TotemBar.iconTintFor / notEnoughMana). Flyout icons
+-- have no range state of their own -- they are alternatives that aren't out --
+-- so only the mana half applies. Cheap: the cost lookup is cached, and the
+-- flyout only exists while it is hovered.
+RefreshFlyoutMana = function()
+    if not (flyoutFrame and flyoutFrame:IsShown()) then
+        return
+    end
+    local playerMana = (type(UnitMana) == "function") and UnitMana("player") or nil
+    local clearcasting = TotemBar.hasClearcasting and TotemBar.hasClearcasting()
+    for i = 1, MAX_FLYOUT_ICONS do
+        local ico = flyoutIcons[i]
+        if ico:IsShown() and ico.totemName then
+            local oom = false
+            if not clearcasting then
+                oom = TotemBar.notEnoughMana(TotemBar.getTotemManaCost(ico.totemName), playerMana)
+            end
+            local r, g, b, key = TotemBar.iconTintFor(false, oom)
+            if key ~= ico.tintKey then
+                ico.icon:SetVertexColor(r, g, b)
+                ico.tintKey = key
+            end
+        end
+    end
+end
+
 HideFlyout = function()
     if flyoutFrame then
         flyoutFrame:Hide()
@@ -717,6 +746,7 @@ OnFlyoutUpdate = function()
         return
     end
     flyoutElapsed = 0
+    RefreshFlyoutMana()
     if flyoutOwnerButton and (MouseIsOver(flyoutFrame) or MouseIsOver(flyoutOwnerButton)) then
         return
     end
@@ -894,7 +924,8 @@ CreateElementButton = function(element, index)
     btn.timerVisible = false       -- cached shown-state, avoid redundant Show/Hide
     btn.timerLastText = nil        -- cached last string, avoid redundant SetText
     btn.timerLastLow = nil         -- cached last <=5s tint state, avoid redundant SetTextColor
-    btn.tintRed = false            -- cached out-of-range tint state, avoid redundant SetVertexColor
+    btn.tintRed = false            -- last out-of-range verdict (read by the Recall button's pulse)
+    btn.tintKey = 0                -- cached composed tint (range + out-of-mana), avoid redundant SetVertexColor
 
     -- Set here (ahead of the later btn.element = element below) because
     -- ApplyRoundFrame, called at the end of this block, needs it for the
@@ -1358,6 +1389,12 @@ UpdateTimerDisplays = function()
     local activeTotems = TotemBar.activeTotems
     local outOfRangeFound = false     -- OR-accumulator across this pass; written to anyOutOfRange at the end
 
+    -- Mana inputs for the out-of-mana dim, read ONCE per pass rather than per
+    -- button: hasClearcasting walks the player's buffs, and there is no reason
+    -- to do that four times for one tick.
+    local playerMana = (type(UnitMana) == "function") and UnitMana("player") or nil
+    local clearcasting = TotemBar.hasClearcasting and TotemBar.hasClearcasting()
+
     for i = 1, table.getn(elements) do
         local element = elements[i]
         local btn = elementButtons[element]
@@ -1545,40 +1582,39 @@ UpdateTimerDisplays = function()
             local rangeActive = TotemBar.rangeTintActive(ownRecord ~= nil, hasGTI,
                 ownRecord and ownRecord.gtiTracked, gtiActive)
 
-            if not rangeActive then
-                if btn.tintRed then
-                    btn.icon:SetVertexColor(1, 1, 1)
-                    btn.tintRed = false
-                end
-            else
-                local hasBuff = TotemBar.hasBuffWithIcon(ownRecord.icon)
-                if hasBuff then
+            local rangeRed = false
+            if rangeActive then
+                if TotemBar.hasBuffWithIcon(ownRecord.icon) then
                     -- In range: remember it (self-learning - marks this
                     -- as a buff totem so a later drop-off can be told
                     -- apart from a totem that simply never grants one).
                     ownRecord.everHadBuff = true
-                    if btn.tintRed then
-                        btn.icon:SetVertexColor(1, 1, 1)
-                        btn.tintRed = false
-                    end
                 elseif ownRecord.everHadBuff then
                     -- Had the buff earlier from this cast, don't have it
-                    -- now: wandered out of the totem's range.
-                    if not btn.tintRed then
-                        btn.icon:SetVertexColor(1, 0.35, 0.35)
-                        btn.tintRed = true
-                    end
-                else
-                    -- Either a non-buff totem (Searing/Magma/Grounding/
-                    -- etc. never grant a matching buff, so everHadBuff
-                    -- stays false forever -> never red) or we simply
-                    -- haven't been in range yet since this cast.
-                    if btn.tintRed then
-                        btn.icon:SetVertexColor(1, 1, 1)
-                        btn.tintRed = false
-                    end
+                    -- now: wandered out of the totem's range. (A non-buff
+                    -- totem - Searing/Magma/Grounding - never sets
+                    -- everHadBuff, so it can never turn red here.)
+                    rangeRed = true
                 end
             end
+
+            -- Out-of-mana dim for the totem THIS slot would cast (the chosen
+            -- one, not the record's - the record is a totem already standing,
+            -- which costs nothing to keep). Composed with the range tint in one
+            -- place: two independent SetVertexColor call sites would race, and
+            -- whichever ran last would win (see TotemBar.iconTintFor).
+            local chosenName = TotemBarDB.chosen and TotemBarDB.chosen[element]
+            local oom = false
+            if chosenName and not clearcasting then
+                oom = TotemBar.notEnoughMana(TotemBar.getTotemManaCost(chosenName), playerMana)
+            end
+
+            local tr2, tg2, tb2, tintKey = TotemBar.iconTintFor(rangeRed, oom)
+            if tintKey ~= btn.tintKey then
+                btn.icon:SetVertexColor(tr2, tg2, tb2)
+                btn.tintKey = tintKey
+            end
+            btn.tintRed = rangeRed
 
             if btn.tintRed then
                 outOfRangeFound = true

@@ -100,6 +100,12 @@ server data, not guesswork. No dependencies; adopts the
 - Optional countdown text under each slot; totems tint red when you leave
   their range (buff-presence based), and the Recall button pulses while
   anything is out of range.
+- **Totems you cannot afford are dimmed** — buttons and flyout, from the real
+  cost of your highest known rank; the dim composes with the range tint instead
+  of overwriting it, and stands down while Clearcasting is up.
+- **Countdowns only start for casts that could go out** — a press refused for
+  mana or a real cooldown is not tracked, so no phantom timer and no wasted
+  Totemic Recall on an empty board.
 - Native cooldown swipes and real in-game spell tooltips everywhere.
 
 **Control**

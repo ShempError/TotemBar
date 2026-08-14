@@ -158,6 +158,42 @@ function TotemBar.rangeTintActive(hasOwnRecord, hasGTI, gtiTracked, gtiActive)
     return true
 end
 
+-- Out-of-mana dim level. Blizzard's own "unusable" grey from FrameXML
+-- ActionButton.lua:280 (ActionButton_UpdateUsable). Blizzard reserves a BLUE
+-- tint (0.5,0.5,1.0) for the not-enough-mana case specifically and grey for
+-- every other reason; TotemBar dims instead, because its icons already carry a
+-- red state and a second HUE would compete with it, while a brightness step
+-- reads on top of any hue.
+TotemBar.OOM_DIM = 0.4
+
+-- Pure: the icon's vertex colour, composed from the two independent reasons a
+-- totem button can be tinted -- out of range (red, buff-presence based, see
+-- rangeTintActive above) and out of mana (dimmed, new). They MULTIPLY rather
+-- than override, so an out-of-range totem the player also cannot afford stays
+-- recognisably red while reading as unavailable; two separate SetVertexColor
+-- call sites would instead have raced, and whichever ran last would have won.
+--
+-- The fourth return is a cache key: the caller stores it on the button and only
+-- touches the texture when it changes (0 allocations, no redundant API calls on
+-- the 5Hz tick).
+function TotemBar.iconTintFor(rangeRed, oom)
+    local r, g, b = 1, 1, 1
+    if rangeRed then
+        r, g, b = 1, 0.35, 0.35
+    end
+    local key = 0
+    if rangeRed then
+        key = key + 1
+    end
+    if oom then
+        key = key + 2
+        r = r * TotemBar.OOM_DIM
+        g = g * TotemBar.OOM_DIM
+        b = b * TotemBar.OOM_DIM
+    end
+    return r, g, b, key
+end
+
 -- Pure: OmniCC-style text for an already-known-positive remaining
 -- seconds value: whole minutes rounded up from 60s on, plain rounded-up
 -- integer seconds below that.
@@ -208,6 +244,91 @@ end
 -- off). Both now route through core/spellindex.lua's cached
 -- TotemBar.findSpellIndex (loaded earlier in the TOC) instead.
 
+-- ===== Cast gate: don't start a countdown for a cast that never went out =====
+--
+-- The symptom this fixes: the timer starts even when the totem could not be
+-- placed. recordCast runs right after CastSpellByName, and 1.12 gives Lua no
+-- return value saying whether the cast was accepted -- so every refused press
+-- used to start a full-length phantom countdown (and made anyTotemOut() true,
+-- which then burned Totemic Recall's 6s cooldown on an empty board).
+--
+-- The verdict is taken BEFORE the cast, by the CastSpellByName/CastSpell hooks
+-- below. Measuring afterwards cannot work: by then the mana is already spent
+-- (so every successful cast looks unaffordable) and the GCD is already running
+-- (so every successful cast looks cooldown-blocked).
+
+-- A cooldown at or below this is treated as the global cooldown and never
+-- blocks. Two reasons: GetSpellCooldown reports the GCD in the same fields as a
+-- real cooldown, and nampower QUEUES a GCD-blocked instant
+-- (NP_QueueInstantSpells, default on) so it still goes out a moment later --
+-- refusing to record it would drop the timer of a totem that IS standing.
+TotemBar.GCD_MAX = 1.6
+
+-- Pure: why can this cast not have gone out? Returns nil (fail open), "mana" or
+-- "cooldown". Every input may be nil -- an unknown never blocks, exactly like
+-- notEnoughMana/confidentNoneOut. Mana is reported first because it is the one
+-- the player can act on.
+function TotemBar.castGateReason(cost, mana, cdStart, cdDuration, gcdMax, clearcasting)
+    if not clearcasting and TotemBar.notEnoughMana(cost, mana) then
+        return "mana"
+    end
+    if cdStart and cdDuration and cdStart > 0 and cdDuration > (gcdMax or TotemBar.GCD_MAX) then
+        return "cooldown"
+    end
+    return nil
+end
+
+-- The pre-cast verdict, stamped with the tick it was taken in. recordCast below
+-- honours it only for the SAME element, the SAME totem and the SAME GetTime()
+-- tick, so a stale verdict can never suppress a later, legitimate cast.
+TotemBar.castBlock = nil
+
+-- WoW-side snapshot taken immediately before the cast leaves. Reads the cached
+-- tooltip mana cost, live mana, and the spell's own cooldown.
+local function computeCastBlock(element, totemName)
+    local cost = TotemBar.getTotemManaCost and TotemBar.getTotemManaCost(totemName)
+    local mana = (type(UnitMana) == "function") and UnitMana("player") or nil
+    local cdStart, cdDuration = nil, nil
+    if type(GetSpellCooldown) == "function" and TotemBar.findSpellIndex then
+        local idx = TotemBar.findSpellIndex(totemName)
+        if idx then
+            cdStart, cdDuration = GetSpellCooldown(idx, BOOKTYPE_SPELL)
+        end
+    end
+    return TotemBar.castGateReason(cost, mana, cdStart, cdDuration,
+        TotemBar.GCD_MAX, TotemBar.hasClearcasting and TotemBar.hasClearcasting())
+end
+
+-- This runs INSIDE the CastSpellByName hook, i.e. in front of every totem cast
+-- the client makes -- including the first one for a totem, where the cost is
+-- still unknown and getTotemManaCost scans a hidden tooltip. Wrapped so that
+-- nothing in that chain (tooltip, spellbook scan, buff walk) can abort the cast
+-- itself. A failure yields no verdict, which is the fail-open state this gate
+-- has anyway whenever an input is unknown -- the cast proceeds and is tracked
+-- exactly as it was before this feature existed.
+function TotemBar.measureCastBlock(element, totemName)
+    if not element or not totemName then
+        return nil
+    end
+    local ok, reason = pcall(computeCastBlock, element, totemName)
+    if not ok then
+        reason = nil
+    end
+    if reason then
+        TotemBar.castBlock = {
+            element = element,
+            name = totemName,
+            at = GetTime(),
+            reason = reason,
+        }
+    else
+        -- Clear rather than leave: a verdict from an earlier cast in this same
+        -- tick must not outlive the cast it belongs to.
+        TotemBar.castBlock = nil
+    end
+    return reason
+end
+
 -- Records that `totemName` was just cast into `element`'s slot, into
 -- TotemBar's own tracking table (see activeTotems above). Touches
 -- GetTime(), a spellbook index/texture scan and (for Searing Totem) a
@@ -223,6 +344,14 @@ end
 -- currently benefiting from THIS cast totem.
 function TotemBar.recordCast(element, totemName)
     if not element or not totemName then
+        return
+    end
+    -- Refused before it left (see measureCastBlock): no timer, and -- like the
+    -- unknown-totem guard below -- no castState.everCast either, since a cast
+    -- that never happened is not evidence that anything is out.
+    local blk = TotemBar.castBlock
+    if blk and blk.reason and blk.element == element and blk.name == totemName
+       and blk.at == GetTime() then
         return
     end
     local highestRank = nil
@@ -259,6 +388,15 @@ function TotemBar.recordCast(element, totemName)
         -- this record's totem name; see TotemBar.rangeTintActive below.
         gtiTracked = false,
     }
+    -- Kept for revokeRecentCast below: if this cast turns out to have been
+    -- refused, the honest correction is the record as it was BEFORE the press,
+    -- not an empty slot (a refused REPEAT press must not lose the still-running
+    -- timer of the totem the first press placed).
+    TotemBar.lastOverwritten = {
+        element = element,
+        rec = TotemBar.activeTotems[element],
+        at = rec.start,
+    }
     TotemBar.activeTotems[element] = rec
     -- Sticky session evidence for confidentNoneOut() below. Deliberately NOT
     -- derived from activeTotems' occupancy: ui.lua's timer tick evicts each
@@ -285,6 +423,82 @@ function TotemBar.recordCastFromHook(element, totemName)
         return
     end
     TotemBar.recordCast(element, totemName)
+end
+
+-- ===== Revoking a timer a failure event proves wrong =====
+--
+-- Second line after the pre-cast gate, for refusals it cannot predict (the
+-- server's own "no", or an element recovery too short to tell apart from the
+-- GCD). The only source used is nampower's SPELL_FAILED_SELF, which carries the
+-- SPELL ID -- so the failure can be tied to a specific totem.
+--
+-- Vanilla's SPELLCAST_FAILED and UI_ERROR_MESSAGE are deliberately NOT used:
+-- both are global and carry no hint of which action failed (UI_ERROR_MESSAGE's
+-- single arg is just the message text). During key spam a refused Lightning
+-- Bolt would then delete the timer of a totem that is standing -- the classic
+-- mis-attribution that hits every addon inferring its own outcome from those
+-- two events. A missing timer is a worse failure than a phantom one, so
+-- unattributable failures are ignored.
+
+-- How long after a cast a failure can still belong to it.
+TotemBar.CAST_FAIL_WINDOW = 0.4
+
+-- Pure: the one element whose record was created inside the window, or nil if
+-- that is ambiguous. A four-totem drop puts several records in the same window;
+-- with no spell id to disambiguate, ANY pick would be a guess, and a wrong
+-- guess deletes a standing totem's timer.
+function TotemBar.soleRecentElement(activeTotems, elements, now, window)
+    if not activeTotems then
+        return nil
+    end
+    local found = nil
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local rec = activeTotems[element]
+        if rec and rec.start and (now - rec.start) <= window then
+            if found then
+                return nil          -- ambiguous: refuse to guess
+            end
+            found = element
+        end
+    end
+    return found
+end
+
+-- Undoes the tracking of a cast that the client/server refused. `spellName` is
+-- the failed totem's name when it could be resolved (exact pick, even with
+-- several casts in flight); nil falls back to the sole-recent rule above.
+--
+-- Restores the record the refused press overwrote instead of clearing the slot
+-- -- see TotemBar.lastOverwritten in recordCast.
+function TotemBar.revokeRecentCast(spellName)
+    local now = GetTime()
+    local element = nil
+    if spellName then
+        for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+            local el = TotemBar.TOTEM_ELEMENTS[i]
+            local rec = TotemBar.activeTotems[el]
+            if rec and rec.totemName == spellName and rec.start
+               and (now - rec.start) <= TotemBar.CAST_FAIL_WINDOW then
+                element = el
+            end
+        end
+    end
+    if not element then
+        element = TotemBar.soleRecentElement(TotemBar.activeTotems,
+            TotemBar.TOTEM_ELEMENTS, now, TotemBar.CAST_FAIL_WINDOW)
+    end
+    if not element then
+        return nil
+    end
+    local prev = TotemBar.lastOverwritten
+    local restore = nil
+    if prev and prev.element == element and prev.at == TotemBar.activeTotems[element].start then
+        restore = prev.rec
+    end
+    TotemBar.activeTotems[element] = restore
+    TotemBar.lastOverwritten = nil
+    return element
 end
 
 -- ===== Universal cast hooks: catch totem casts from ANY path =====
@@ -320,11 +534,20 @@ end
 -- covers action-bar-dragged totem casts as the resolveRemaining/
 -- resolveDuration fallback source when pfUI is present, this gap was
 -- judged not worth the added dependency/complexity.
+-- Both hooks measure the cast gate BEFORE calling through (see
+-- measureCastBlock: afterwards the mana is spent and the GCD is running, so the
+-- reading would accuse every successful cast). This placement also covers the
+-- paths that record for themselves -- ui.lua's click handlers, castNext/castAll,
+-- bind.lua -- because they all reach the client through these same globals, so
+-- their own recordCast call sees the verdict too.
 if type(CastSpellByName) == "function" then
     local origCastSpellByName = CastSpellByName
     CastSpellByName = function(name, onSelf)
-        origCastSpellByName(name, onSelf)
         local element, baseName = TotemBar.elementFromCastName(name)
+        if element then
+            TotemBar.measureCastBlock(element, baseName)
+        end
+        origCastSpellByName(name, onSelf)
         if element then
             TotemBar.recordCastFromHook(element, baseName)
         end
@@ -334,15 +557,64 @@ end
 if type(CastSpell) == "function" then
     local origCastSpell = CastSpell
     CastSpell = function(spellId, bookType)
-        origCastSpell(spellId, bookType)
+        local element, baseName = nil, nil
         if type(GetSpellName) == "function" then
-            local rawName = GetSpellName(spellId, bookType)
-            local element, baseName = TotemBar.elementFromCastName(rawName)
+            element, baseName = TotemBar.elementFromCastName(GetSpellName(spellId, bookType))
             if element then
-                TotemBar.recordCastFromHook(element, baseName)
+                TotemBar.measureCastBlock(element, baseName)
             end
         end
+        origCastSpell(spellId, bookType)
+        if element then
+            TotemBar.recordCastFromHook(element, baseName)
+        end
     end
+end
+
+-- nampower's per-cast failure event (arg1 = spell id, arg2 = result, arg3 = 1
+-- when the SERVER rejected it). It only fires with NP_EnableSpellFailedEvents
+-- on, and nampower silently RETRIES some results (NP_RetryServerRejectedSpells,
+-- default on: NOT_READY / ITEM_NOT_READY / SPELL_IN_PROGRESS), so those may
+-- never arrive at all -- which is correct for us, since a retried cast that
+-- lands really did place the totem.
+--
+-- Registering it costs nothing when nampower is absent (the event simply never
+-- fires). The CVar is NOT set here: flipping a client-wide nampower switch is a
+-- side effect on every other addon, and this is a safety net, not the primary
+-- fix.
+--
+-- Guarded on CreateFrame so the file still loads under plain Lua for the tests.
+if CreateFrame then
+    local failFrame = CreateFrame("Frame", "TotemBarCastFailFrame", UIParent)
+    failFrame:RegisterEvent("SPELL_FAILED_SELF")
+    failFrame:SetScript("OnEvent", function()
+        if event ~= "SPELL_FAILED_SELF" then
+            return
+        end
+        -- Resolve the id to a name. SuperWoW's SpellInfo reads the client DBC;
+        -- nampower ships its own lookup (and is what fired this event, so one
+        -- of the two is normally there).
+        local name = nil
+        local id = arg1
+        if id then
+            if type(SpellInfo) == "function" then
+                name = SpellInfo(id)
+            elseif type(GetSpellNameAndRankForId) == "function" then
+                name = GetSpellNameAndRankForId(id)
+            end
+            if name then
+                name = TotemBar.stripRankSuffix(name)
+            end
+        end
+        -- No name, no revoke. An unnamed failure could just as well be the
+        -- Lightning Bolt the player pressed a moment after the totem, and
+        -- acting on it would delete the timer of a totem that IS standing --
+        -- the same mis-attribution UI_ERROR_MESSAGE is refused for above.
+        if not name or not TotemBar.elementOf(name) then
+            return
+        end
+        TotemBar.revokeRecentCast(name)
+    end)
 end
 
 -- Module-scratch table for the buff-texture scan below, reused every

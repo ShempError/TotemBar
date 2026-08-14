@@ -5,6 +5,24 @@ All notable changes to TotemBar are documented here.
 ## v0.2.5 — 2026-07-25
 
 ### Added
+- **Totems you cannot afford are dimmed.** Element buttons and the hover flyout
+  grey out while your mana is below the totem's cost, so the bar shows what is
+  actually castable instead of only what is chosen. The cost is the real one for
+  your highest known rank, including cost talents, and the dim composes with the
+  out-of-range tint rather than replacing it — an out-of-range totem you also
+  cannot afford still reads as red, just darker. Clearcasting suspends it, since
+  the next spell is free while it is up.
+
+### Fixed
+- **A refused cast no longer starts a countdown.** Pressing a totem without the
+  mana for it (or while that spell is genuinely on cooldown) started a full
+  timer for a totem that was never placed — which also made Totemic Recall
+  believe something was out and burn its 6s cooldown on an empty board. The
+  cast's chances are now measured *before* it leaves, so a press that cannot
+  have gone through is not tracked. Anything unknown still counts as a cast, on
+  purpose: a missing timer is worse than a phantom one. With nampower present, a
+  server-side refusal additionally undoes the timer it belongs to — and a
+  refused *repeat* press restores the original timer instead of clearing it.
 - **New option: "Show drop-all button".** The drop-all-totems button can now be
   hidden from the bar, for anyone who drives it purely from a keybind or a macro
   and would rather not spend the slot on it. On by default, so nothing changes
