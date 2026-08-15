@@ -1,5 +1,5 @@
 // TotemBar - tools/gen_ui_textures.js
-// Rev 4 UI-chrome texture pass (.superpowers/sdd/rev4-ui-brief.md): panel
+// UI-chrome texture pass: panel
 // border (edgeFile strip), panel background (tileable), and a small UI sheet
 // (shadow plate / emblem / divider). Zero dependencies. Copies the TGA-writer
 // pattern from tools/gen_ring_textures.js (read-only reference, NOT modified

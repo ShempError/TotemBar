@@ -50,8 +50,7 @@
 //     verification point is that r in (22.5, 24.2) is 0 alpha on BOTH arc
 //     sheets, i.e. no overlap).
 // (3) NEW ring_pulsearc.tga sheet: the pulse-to-next-tick countdown, formerly
-//     planned as a linear bar under the icon (see
-//     docs/superpowers/sdd/... pulse-ui-design.md), is now a second circular
+//     planned as a linear bar under the icon, is now a second circular
 //     arc drawn INSIDE the duration arc, occupying its own thin radial band
 //     (19.5..22.5) with a calmer (no comet tip) white neon profile.
 // ---------------------------------------------------------------------------

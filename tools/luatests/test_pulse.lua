@@ -1,5 +1,5 @@
 -- Offline test: core/pulsedata.lua + core/pulse.lua (pure pulse math for the
--- Pulse UI, spec docs/superpowers/specs/2026-07-09-pulse-ui-design.md).
+-- Pulse UI).
 -- Run from repo root: lua50.exe tools/luatests/test_pulse.lua
 
 dofile("tools/luatests/harness.lua")

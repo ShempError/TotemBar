@@ -10,8 +10,7 @@
 -- values - source="server" records that provenance. verified=false stays
 -- reserved for IN-GAME confirmation: /tb pulsecal (core/pulsecal.lua)
 -- captures the real timings; once measured in-game, update the value AND
--- flip verified=true. Spec:
--- docs/superpowers/specs/2026-07-09-pulse-ui-design.md section 3.
+-- flip verified=true.
 --
 -- firstTick: "immediate" means the aura's periodic tick fires at t=0 (the
 -- totem is on SpellAuras.cpp's CalculatePeriodic exception list);

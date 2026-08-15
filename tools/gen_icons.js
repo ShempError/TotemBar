@@ -1,5 +1,5 @@
 // TotemBar - tools/gen_icons.js
-// Generates the Rev 3 custom icon sheet (docs/superpowers/sdd/rev3-icons-brief.md):
+// Generates the custom icon sheet:
 // element glyph icons (replace INV_Misc_QuestionMark on empty slots), the Recall
 // spiral icon (replaces Spell_Nature_AstralRecal), the DropSet diamond icon
 // (replaces Spell_Nature_TremorTotem), and a transparent-background minimap totem

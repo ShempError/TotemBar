@@ -55,7 +55,7 @@ function TotemBar.ensureDefaults()
     TotemBarDB.recallRefundPct = TotemBarDB.recallRefundPct or 0.25
     TotemBarDB.buttonGap = TotemBarDB.buttonGap or TotemBar.DEFAULT_BUTTON_GAP
 
-    -- Pulse UI (spec docs/superpowers/specs/2026-07-09-pulse-ui-design.md):
+    -- Pulse UI:
     -- duration ring + pulse bars, all on by default; ringStyle "round" vs
     -- "square" is the in-game comparison toggle.
     if TotemBarDB.showDurationRing == nil then

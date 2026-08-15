@@ -65,8 +65,7 @@ local EMPTY_ICON = "Interface\\Icons\\INV_Misc_QuestionMark"
 local RECALL_SPELL_NAME = "Totemic Recall"
 local RECALL_ICON_FALLBACK = "Interface\\Icons\\Spell_Nature_AstralRecal"
 
--- Pulse UI Rev 2 - floating round icons + ripple pulse (spec
--- docs/superpowers/specs/2026-07-09-pulse-ui-design.md, section "Rev 2").
+-- Pulse UI - floating round icons + ripple pulse.
 -- Ring flipbook: 8x8 grid texture (64 cells). Cells 1..62 = duration-arc
 -- fill frames (0=empty .. 61=full), cell 63 = wave ring (ripple), cell 64 =
 -- the decorative frame band - always shown, hides the icon's square
