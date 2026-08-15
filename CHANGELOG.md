@@ -2,7 +2,7 @@
 
 All notable changes to TotemBar are documented here.
 
-## v0.2.5 — 2026-07-25
+## v0.3.0 — 2026-08-15
 
 ### Added
 - **Totems you cannot afford are dimmed.** Element buttons and the hover flyout
@@ -14,15 +14,84 @@ All notable changes to TotemBar are documented here.
   the next spell is free while it is up.
 
 ### Fixed
-- **A refused cast no longer starts a countdown.** Pressing a totem without the
-  mana for it (or while that spell is genuinely on cooldown) started a full
-  timer for a totem that was never placed — which also made Totemic Recall
-  believe something was out and burn its 6s cooldown on an empty board. The
-  cast's chances are now measured *before* it leaves, so a press that cannot
-  have gone through is not tracked. Anything unknown still counts as a cast, on
-  purpose: a missing timer is worse than a phantom one. With nampower present, a
-  server-side refusal additionally undoes the timer it belongs to — and a
-  refused *repeat* press restores the original timer instead of clearing it.
+- **A refused cast no longer starts a countdown, and one that already started
+  can now be taken back.** Pressing a totem without the mana for it (or while
+  it is genuinely on cooldown) used to start a full timer for a totem that was
+  never placed — which also made Totemic Recall believe something was out and
+  burn its 6s cooldown on an empty board. The cast's chances are now checked
+  *before* it leaves, so an attempt that cannot have gone through is never
+  tracked in the first place. A second layer catches what the pre-check
+  cannot predict — movement, another action already in progress, a stun, or a
+  server-side refusal — by watching the client's own "cast failed" signal
+  (the exact one with nampower, an error-message fallback without it) and
+  undoing the countdown after the fact. That revoke is filtered narrowly on
+  purpose: it only fires for the totem cast just attempted, only within a
+  short window afterward, and only for messages the client is known to use
+  for a refused cast, so it stays silent whenever it cannot be sure — a
+  refused *repeat* press restores the original timer rather than clearing it.
+  In every case where attribution is uncertain, this fails **closed**: no
+  revoke happens, and the existing timer is left standing, because a missing
+  timer is worse than a phantom one.
+- **Totemic Recall no longer wipes your totem timers on a press that could not
+  have gone out.** Recall's own 6s cooldown or the global cooldown could
+  refuse a manual Recall press while the button and keybind still cleared the
+  addon's totem tracking as if it had fired — after which the addon believed
+  nothing was out and refused every further Recall press until something
+  re-armed it. Recall now checks whether the cast can actually go out before
+  it touches the tracking, and a press that cannot keeps it intact.
+- **Totemic Recall no longer wastes its cooldown on a no-op moments after your
+  totems expire.** The check for "is anything even out" relied on the totem
+  tracking table staying occupied, but that table is emptied the instant each
+  totem's own timer runs out — so within a fraction of a second of the last
+  totem expiring, Recall forgot it had ever cast anything and let a needless
+  press through, burning the cooldown on an empty board. A separate flag now
+  answers "did we cast this session", so the check survives normal timer
+  expiry as intended.
+- **The Recall button and its keybind can no longer sweep away a set you just
+  redeployed.** Both issued a plain Totemic Recall cast, which nampower
+  queues behind the global cooldown — so pressing Recall during a GCD could
+  fire it *after* you had already placed your totems again, recalling the
+  set you had just dropped. Both now share the same queue-safe cast the
+  automatic recall paths already used, so a GCD-blocked press is skipped
+  instead of firing late.
+- **A totem you have not learned no longer starts a countdown.** The saved
+  totem set is account-wide and not checked against the spellbook, so a set
+  carried over from another character could land on one that never learned
+  those totems. Casting it was a guaranteed no-op, but it still started a
+  full phantom timer and made Totemic Recall think something was out.
+- **Sentry Totem's timer no longer expires 180 seconds early.** It was
+  missing its own duration entry and silently fell back to a generic
+  120-second default, well short of the totem's real 5-minute duration.
+- **The seventh Air totem is no longer dropped from the hover flyout.** The
+  flyout's icon pool was sized for six totems, but Air offers seven — with
+  the Air slot left empty, the last entry could neither be cast nor be set
+  as the slot's new default from the bar.
+- **Windwall Totem no longer reads permanently in-range once you are also
+  carrying Strength of Earth Totem.** The range check matched buff icons by
+  an unanchored substring, and Strength of Earth Totem's icon name happens to
+  start with Windwall's, so carrying one made the other's out-of-range tint
+  never trigger.
+- **A totem pulse from another shaman can no longer drag your own pulse ring
+  backward.** The periodic self-heal/self-mana messages TotemBar reads to
+  time the pulse ring carry no caster information, so an identically worded
+  tick from someone else's totem re-anchored the phase and made the ring
+  visibly jump. Anchoring is now limited to at most once per pulse interval.
+- **The out-of-range tint no longer skips most of a freshly-placed set when
+  pfUI is loaded.** pfUI's own totem tracking commits at most one totem per
+  cast, so dropping a full four-totem set left three slots with no
+  information from it at all — and those slots were treated as "known to be
+  in range" instead of falling back to TotemBar's own tracking, so most of
+  the set never turned red out of range or pulsed the Recall button.
+- **The duration ring no longer counts down, jumps back up, and counts down
+  again with Totemic Mastery talented.** TotemBar's own tracking stores the
+  Mastery-inflated duration while pfUI's totem data reports the shorter flat
+  spellbook value; the display preferred pfUI's number until it ran out, then
+  jumped back up to the correct remaining time. Both sources now agree on the
+  same, Mastery-scaled endpoint.
+
+## v0.2.5 — 2026-07-25
+
+### Added
 - **New option: "Show drop-all button".** The drop-all-totems button can now be
   hidden from the bar, for anyone who drives it purely from a keybind or a macro
   and would rather not spend the slot on it. On by default, so nothing changes

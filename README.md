@@ -31,6 +31,16 @@ server data, not guesswork. No dependencies; adopts the
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.3.0** (2026-08-15) — element buttons and the flyout now dim totems you
+  can't afford; a refused cast no longer starts a phantom countdown, and one
+  that already started can now be taken back after the fact (narrowly, and
+  never at the risk of clearing a real timer). Also fixes Totemic Recall
+  wiping or wasting itself around a press that couldn't go out or one queued
+  behind the global cooldown, Sentry Totem's timer expiring early, the
+  seventh Air totem being unreachable, Windwall's range tint sticking on
+  with Strength of Earth also up, the pulse ring jumping on another
+  shaman's tick, the out-of-range tint missing most of a set under pfUI, and
+  the duration ring double-counting with Totemic Mastery talented.
 - **v0.2.5** (2026-07-25) — new option **"Show drop-all button"**: hide the
   drop-all-totems button if you fire it from a keybind or macro and would rather
   not spend a slot on it. The keybind keeps working while it's hidden, and in the
@@ -105,7 +115,11 @@ server data, not guesswork. No dependencies; adopts the
   of overwriting it, and stands down while Clearcasting is up.
 - **Countdowns only start for casts that could go out** — a press refused for
   mana or a real cooldown is not tracked, so no phantom timer and no wasted
-  Totemic Recall on an empty board.
+  Totemic Recall on an empty board. A second check catches what that cannot
+  predict (movement, a stun, a server-side refusal) and takes the countdown
+  back after the fact — narrowly filtered to the totem just pressed, so it
+  stays silent whenever it can't be sure rather than risk clearing a timer
+  for a totem that is actually still out.
 - Native cooldown swipes and real in-game spell tooltips everywhere.
 
 **Control**
@@ -196,7 +210,7 @@ timers as an extra source) and **SuperWoW** (only used by the `/tb scan` /
 
 - Public API for companion addons: [`docs/API.md`](docs/API.md).
 - Pure-logic modules under `core/` are unit-tested offline against a real
-  Lua 5.0.3 interpreter (`tools/luatests/`, 14 suites). WoW-API files are
+  Lua 5.0.3 interpreter (`tools/luatests/`, 19 suites). WoW-API files are
   syntax-checked; in-game behavior is verified on TurtleWoW.
 - All textures are **generated**: `tools/gen_*.js` (zero-dependency Node)
   render the ring/FX/icon/panel sheets as 1.12-safe TGAs, and
