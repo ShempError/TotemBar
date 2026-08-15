@@ -225,4 +225,71 @@ H.run("revokeRecentCast: an unrelated late error changes nothing", function()
     H.assert_eq(type(TotemBar.activeTotems.Fire), "table", "the standing totem keeps its timer")
 end)
 
+-- ===== 6. attributing a GLOBAL failure event (UI_ERROR_MESSAGE/SPELLCAST_*) =====
+-- These events carry no spell identity, so the ONLY safe attribution is: the
+-- last thing this addon's hooks saw the client attempt (ANY spell) must have
+-- BEEN the totem, inside a narrow window -- and for UI_ERROR_MESSAGE, the
+-- message text must be a recognised "spell cast refused" string.
+
+H.run("messageSet: builds a lookup set from a hole-free array", function()
+    -- NOTE: the input must be hole-free (built with table.insert, like
+    -- buildCastFailureMessages does) -- table.getn over a Lua 5.0 table
+    -- literal with a nil in the MIDDLE is undefined and would silently drop
+    -- everything after the gap. A trailing nil is fine (well-defined: the
+    -- constructor simply never stores that slot).
+    local set = TotemBar.messageSet({ "Not enough mana", "Out of range." })
+    H.assert_eq(set["Not enough mana"], true, "first entry present")
+    H.assert_eq(set["Out of range."], true, "second entry present")
+    H.assert_eq(set["Something else"], nil, "unlisted string absent")
+    H.assert_eq(TotemBar.messageSet(nil)["x"], nil, "nil input -> empty set, no error")
+end)
+
+H.run("attributeCastFailure: revokes only the EXACT last-attempted totem, in window", function()
+    local allow = TotemBar.messageSet({ "Not enough mana" })
+
+    local attempt = { element = "Fire", name = "Searing Totem", at = 1000 }
+    local el, name = TotemBar.attributeCastFailure(attempt, 1000.2, 0.4, nil, allow)
+    H.assert_eq(el, "Fire", "SPELLCAST_FAILED (no message) attributes to the last totem attempt")
+    H.assert_eq(name, "Searing Totem", "and carries its exact name")
+
+    el = TotemBar.attributeCastFailure(nil, 1000.2, 0.4, nil, allow)
+    H.assert_eq(el, nil, "no attempt on record -> nothing to attribute")
+
+    el = TotemBar.attributeCastFailure({ element = nil, name = nil, at = 1000 }, 1000.2, 0.4, nil, allow)
+    H.assert_eq(el, nil, "last attempt was NOT a totem -> never attribute")
+end)
+
+H.run("attributeCastFailure: a later, different spell attempt overrides the totem", function()
+    -- The exact case UI_ERROR_MESSAGE/SPELLCAST_FAILED were refused for: key
+    -- spam casts the totem, then a damage spell, and THAT one fails. lastCastAttempt
+    -- now names the damage spell (element=nil), so the totem is never touched.
+    local allow = TotemBar.messageSet({ "Not enough mana" })
+    local attempt = { element = nil, name = nil, at = 1000.1 }  -- Lightning Bolt attempted after the totem
+    local el = TotemBar.attributeCastFailure(attempt, 1000.2, 0.4, "Not enough mana", allow)
+    H.assert_eq(el, nil, "the totem is not blamed for a later spell's failure")
+end)
+
+H.run("attributeCastFailure: outside the window does not attribute", function()
+    local allow = TotemBar.messageSet({ "Not enough mana" })
+    local attempt = { element = "Fire", name = "Searing Totem", at = 1000 }
+    local el = TotemBar.attributeCastFailure(attempt, 1000.5, 0.4, nil, allow)
+    H.assert_eq(el, nil, "0.5s > 0.4s window -> too late to attribute")
+end)
+
+H.run("attributeCastFailure: UI_ERROR_MESSAGE requires an allow-listed message", function()
+    local allow = TotemBar.messageSet({ "Not enough mana" })
+    local attempt = { element = "Fire", name = "Searing Totem", at = 1000 }
+
+    local el = TotemBar.attributeCastFailure(attempt, 1000.1, 0.4, "Not enough mana", allow)
+    H.assert_eq(el, "Fire", "a recognised cast-failure message attributes")
+
+    el = TotemBar.attributeCastFailure(attempt, 1000.1, 0.4, "Your bags are full.", allow)
+    H.assert_eq(el, nil,
+        "an UNRELATED UI_ERROR_MESSAGE (loot/trade/etc.) inside the same window must NOT revoke -- " ..
+        "this is exactly the over-firing risk this filter exists to prevent")
+
+    el = TotemBar.attributeCastFailure(attempt, 1000.1, 0.4, "Not enough mana", nil)
+    H.assert_eq(el, nil, "missing allowlist fails CLOSED (no revoke), never open")
+end)
+
 H.summary()

@@ -428,17 +428,31 @@ end
 -- ===== Revoking a timer a failure event proves wrong =====
 --
 -- Second line after the pre-cast gate, for refusals it cannot predict (the
--- server's own "no", or an element recovery too short to tell apart from the
--- GCD). The only source used is nampower's SPELL_FAILED_SELF, which carries the
--- SPELL ID -- so the failure can be tied to a specific totem.
+-- server's own "no", an element recovery too short to tell apart from the
+-- GCD, movement, or a client-side refusal like "another action in
+-- progress"). nampower's SPELL_FAILED_SELF (carries a SPELL ID) is the exact
+-- source when nampower is present; UI_ERROR_MESSAGE/SPELLCAST_FAILED/
+-- SPELLCAST_INTERRUPTED below are the fallback for everyone else.
 --
--- Vanilla's SPELLCAST_FAILED and UI_ERROR_MESSAGE are deliberately NOT used:
--- both are global and carry no hint of which action failed (UI_ERROR_MESSAGE's
--- single arg is just the message text). During key spam a refused Lightning
--- Bolt would then delete the timer of a totem that is standing -- the classic
--- mis-attribution that hits every addon inferring its own outcome from those
--- two events. A missing timer is a worse failure than a phantom one, so
--- unattributable failures are ignored.
+-- Vanilla's SPELLCAST_FAILED and UI_ERROR_MESSAGE were refused for a long
+-- time: both are global and carry no hint of which action failed
+-- (UI_ERROR_MESSAGE's single arg is just the message text). During key spam a
+-- refused Lightning Bolt could delete the timer of a totem that is standing --
+-- the classic mis-attribution that hits every addon inferring its own outcome
+-- from those two events. This is now wired up (see lastCastAttempt and
+-- attributeCastFailure below), gated tightly enough that the Lightning Bolt
+-- case above cannot happen:
+--   1. the LAST spell the client attempted through CastSpellByName/CastSpell
+--      -- ANY spell, not only totems -- must have been the totem itself. A
+--      Lightning Bolt cast after it, even a fraction of a second later,
+--      becomes the new "last attempt" and the totem is never touched.
+--   2. that attempt must be within CAST_FAIL_WINDOW seconds.
+--   3. for UI_ERROR_MESSAGE specifically (the one event of the three that
+--      fires for unrelated things too -- loot, trade, chat, ...) the message
+--      text must be one of the client's own "a spell cast was refused"
+--      strings (read live off the globals, so this self-localizes).
+-- A missing timer is still a worse failure than a phantom one, so anything
+-- that fails any of the three checks is left alone.
 
 -- How long after a cast a failure can still belong to it.
 TotemBar.CAST_FAIL_WINDOW = 0.4
@@ -501,6 +515,68 @@ function TotemBar.revokeRecentCast(spellName)
     return element
 end
 
+-- Last spell cast attempt the client made through CastSpellByName/CastSpell --
+-- ANY spell, not only totems (element/name are nil for a non-totem attempt).
+-- Written by both hooks below, unconditionally, on every call. This is what
+-- makes attributeCastFailure's attribution exact instead of a guess: it
+-- always names the ONE totem that was actually last attempted, and a later,
+-- different spell attempt overwrites it -- so a failure belonging to that
+-- later spell can never be blamed on the totem that came before it.
+TotemBar.lastCastAttempt = nil
+
+local function noteCastAttempt(element, totemName)
+    TotemBar.lastCastAttempt = { element = element, name = totemName, at = GetTime() }
+end
+
+-- Pure: turns a flat, HOLE-FREE array of strings (built with table.insert,
+-- see buildCastFailureMessages below -- a literal array with a nil in the
+-- MIDDLE is undefined for table.getn in Lua 5.0 and would silently drop
+-- every entry after it) into a lookup set. Used to build the
+-- UI_ERROR_MESSAGE allowlist from live client globals, and independently
+-- testable offline with a hand-built array.
+function TotemBar.messageSet(list)
+    local set = {}
+    if not list then
+        return set
+    end
+    for i = 1, table.getn(list) do
+        if list[i] then
+            set[list[i]] = true
+        end
+    end
+    return set
+end
+
+-- Pure: should a global failure event revoke lastAttempt's totem timer?
+-- Returns the element and totem name to revoke, or nil, nil.
+--
+--   lastAttempt   the last thing this addon's hooks saw the client attempt
+--                  (ANY spell -- see noteCastAttempt above), or nil.
+--   now, window   lastAttempt.at must be within `window` seconds of `now`.
+--   message       the UI_ERROR_MESSAGE text, or nil for SPELLCAST_FAILED/
+--                  SPELLCAST_INTERRUPTED (neither carries one in 1.12).
+--   allowlist     set of message strings that mean "a spell cast was
+--                  refused" (see messageSet/buildCastFailureMessages).
+--                  Checked ONLY when a message was given -- SPELLCAST_FAILED/
+--                  SPELLCAST_INTERRUPTED are already scoped to the player's
+--                  own current cast by the client, so they need no text
+--                  filter; UI_ERROR_MESSAGE does, since it also fires for
+--                  loot/trade/chat/etc. A message that isn't recognised (or a
+--                  missing/empty allowlist) fails CLOSED -- no revoke -- same
+--                  policy as an unattributable failure above.
+function TotemBar.attributeCastFailure(lastAttempt, now, window, message, allowlist)
+    if not lastAttempt or not lastAttempt.element then
+        return nil, nil
+    end
+    if not lastAttempt.at or not now or not window or (now - lastAttempt.at) > window then
+        return nil, nil
+    end
+    if message ~= nil and (not allowlist or not allowlist[message]) then
+        return nil, nil
+    end
+    return lastAttempt.element, lastAttempt.name
+end
+
 -- ===== Universal cast hooks: catch totem casts from ANY path =====
 -- Defense-in-depth for totems cast WITHOUT going through any TotemBar
 -- function at all -- e.g. a hand-written macro's own `/cast Searing Totem`,
@@ -544,6 +620,7 @@ if type(CastSpellByName) == "function" then
     local origCastSpellByName = CastSpellByName
     CastSpellByName = function(name, onSelf)
         local element, baseName = TotemBar.elementFromCastName(name)
+        noteCastAttempt(element, baseName)
         if element then
             TotemBar.measureCastBlock(element, baseName)
         end
@@ -560,9 +637,10 @@ if type(CastSpell) == "function" then
         local element, baseName = nil, nil
         if type(GetSpellName) == "function" then
             element, baseName = TotemBar.elementFromCastName(GetSpellName(spellId, bookType))
-            if element then
-                TotemBar.measureCastBlock(element, baseName)
-            end
+        end
+        noteCastAttempt(element, baseName)
+        if element then
+            TotemBar.measureCastBlock(element, baseName)
         end
         origCastSpell(spellId, bookType)
         if element then
@@ -583,37 +661,98 @@ end
 -- side effect on every other addon, and this is a safety net, not the primary
 -- fix.
 --
+-- UI_ERROR_MESSAGE / SPELLCAST_FAILED / SPELLCAST_INTERRUPTED cover the same
+-- ground for players WITHOUT nampower (see the header comment above for why
+-- these were declined before, and why attributeCastFailure now makes them
+-- safe: exact last-attempted-spell match, a narrow window, and -- for
+-- UI_ERROR_MESSAGE specifically -- a message-text allowlist).
+--
 -- Guarded on CreateFrame so the file still loads under plain Lua for the tests.
 if CreateFrame then
     local failFrame = CreateFrame("Frame", "TotemBarCastFailFrame", UIParent)
     failFrame:RegisterEvent("SPELL_FAILED_SELF")
+    failFrame:RegisterEvent("UI_ERROR_MESSAGE")
+    failFrame:RegisterEvent("SPELLCAST_FAILED")
+    failFrame:RegisterEvent("SPELLCAST_INTERRUPTED")
+
+    -- Built lazily from the client's own global error strings on first use
+    -- (see attributeCastFailure's `allowlist` doc above) -- self-localizes,
+    -- and never goes stale against a client string update. Cached: this can
+    -- fire several times a fight.
+    local castFailureMessages = nil
+    local function buildCastFailureMessages()
+        -- Built with table.insert, not a literal array, so a global that
+        -- doesn't exist on this client build never leaves a HOLE in the
+        -- middle of the list -- table.getn (which messageSet uses) is
+        -- undefined over a table with holes in Lua 5.0 and would silently
+        -- drop every entry after the first missing one.
+        local raw = {}
+        local function add(v) if v then table.insert(raw, v) end end
+        add(ERR_OUT_OF_MANA)
+        add(ERR_SPELL_COOLDOWN)
+        add(ERR_OUT_OF_RANGE)
+        add(ERR_SPELL_OUT_OF_RANGE)
+        add(SPELL_FAILED_MOVING)
+        add(SPELL_FAILED_NOT_READY)
+        add(SPELL_FAILED_ITEM_NOT_READY)
+        add(SPELL_FAILED_SPELL_IN_PROGRESS)
+        add(SPELL_FAILED_STUNNED)
+        add(SPELL_FAILED_SILENCED)
+        add(SPELL_FAILED_PACIFIED)
+        add(SPELL_FAILED_CONFUSED)
+        add(SPELL_FAILED_CASTER_DEAD)
+        add(SPELL_FAILED_CASTER_AURASTATE)
+        add(SPELL_FAILED_FLEEING)
+        add(SPELL_FAILED_AFFECTING_COMBAT)
+        return TotemBar.messageSet(raw)
+    end
+
     failFrame:SetScript("OnEvent", function()
-        if event ~= "SPELL_FAILED_SELF" then
+        if event == "SPELL_FAILED_SELF" then
+            -- Resolve the id to a name. SuperWoW's SpellInfo reads the client
+            -- DBC; nampower ships its own lookup (and is what fired this
+            -- event, so one of the two is normally there).
+            local name = nil
+            local id = arg1
+            if id then
+                if type(SpellInfo) == "function" then
+                    name = SpellInfo(id)
+                elseif type(GetSpellNameAndRankForId) == "function" then
+                    name = GetSpellNameAndRankForId(id)
+                end
+                if name then
+                    name = TotemBar.stripRankSuffix(name)
+                end
+            end
+            -- No name, no revoke. An unnamed failure could just as well be
+            -- the Lightning Bolt the player pressed a moment after the totem.
+            if not name or not TotemBar.elementOf(name) then
+                return
+            end
+            TotemBar.revokeRecentCast(name)
+            TotemBar.lastCastAttempt = nil
             return
         end
-        -- Resolve the id to a name. SuperWoW's SpellInfo reads the client DBC;
-        -- nampower ships its own lookup (and is what fired this event, so one
-        -- of the two is normally there).
-        local name = nil
-        local id = arg1
-        if id then
-            if type(SpellInfo) == "function" then
-                name = SpellInfo(id)
-            elseif type(GetSpellNameAndRankForId) == "function" then
-                name = GetSpellNameAndRankForId(id)
+
+        if event == "UI_ERROR_MESSAGE" or event == "SPELLCAST_FAILED" or event == "SPELLCAST_INTERRUPTED" then
+            local message = nil
+            if event == "UI_ERROR_MESSAGE" then
+                message = arg1
+                if not castFailureMessages then
+                    castFailureMessages = buildCastFailureMessages()
+                end
             end
-            if name then
-                name = TotemBar.stripRankSuffix(name)
+            local element, name = TotemBar.attributeCastFailure(TotemBar.lastCastAttempt,
+                GetTime(), TotemBar.CAST_FAIL_WINDOW, message, castFailureMessages)
+            if element then
+                TotemBar.revokeRecentCast(name)
+                -- Consume: a second event for the SAME refusal (e.g.
+                -- SPELLCAST_FAILED right after UI_ERROR_MESSAGE) must not
+                -- attribute again, and a later, unrelated failure must not
+                -- reuse this now-stale attempt either.
+                TotemBar.lastCastAttempt = nil
             end
         end
-        -- No name, no revoke. An unnamed failure could just as well be the
-        -- Lightning Bolt the player pressed a moment after the totem, and
-        -- acting on it would delete the timer of a totem that IS standing --
-        -- the same mis-attribution UI_ERROR_MESSAGE is refused for above.
-        if not name or not TotemBar.elementOf(name) then
-            return
-        end
-        TotemBar.revokeRecentCast(name)
     end)
 end
 
