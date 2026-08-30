@@ -2,6 +2,13 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.4.1 — 2026-08-31
+
+### Fixed
+- A totem destroyed by the enemy inside the ~0.4s window between a Totemic Recall wipe and its
+  refusal being attributed now stays dead instead of having its countdown resurrected by the
+  refused-recall restore (`core/cast.lua`).
+
 ## v0.4.0 — 2026-08-30
 
 ### Added

@@ -1307,6 +1307,21 @@ if CreateFrame then
                     TotemBar.TOTEM_ELEMENTS, name, owner, playerName)
                 if element then
                     TotemBar.evictDestroyedTotem(element)
+                    return
+                end
+                -- Recall-attribution race (see "Recall-attribution vs.
+                -- destruction race" above): activeTotems has nothing for
+                -- this element because a recall wipe already cleared it and
+                -- is still awaiting attribution -- re-run the same owner/
+                -- name match against that pending snapshot so a later
+                -- restoreRecalledTotems doesn't bring the dead totem back.
+                local snapshotRecs = TotemBar.pendingRecallSnapshotRecs()
+                if snapshotRecs then
+                    local snapElement = TotemBar.elementForOwnedTotemName(snapshotRecs,
+                        TotemBar.TOTEM_ELEMENTS, name, owner, playerName)
+                    if snapElement then
+                        TotemBar.evictFromRecallSnapshot(snapElement)
+                    end
                 end
                 return
             end
@@ -1315,21 +1330,19 @@ if CreateFrame then
                 local element = TotemBar.elementForDiesLineCandidate(TotemBar.activeTotems,
                     TotemBar.TOTEM_ELEMENTS, diesName)
                 if element then
-                    local rec = TotemBar.activeTotems[element]
-                    local exists, guid, health, deadOrGhost = nil, nil, nil, nil
-                    if type(UnitExists) == "function" then
-                        exists, guid = UnitExists(rec.guid)
-                    end
-                    if exists then
-                        if type(UnitHealth) == "function" then
-                            health = UnitHealth(rec.guid)
-                        end
-                        if type(UnitIsDeadOrGhost) == "function" then
-                            deadOrGhost = UnitIsDeadOrGhost(rec.guid)
-                        end
-                    end
-                    if TotemBar.totemDestroyed(exists, health, deadOrGhost) then
+                    if TotemBar.verifyDiesLineDestruction(TotemBar.activeTotems[element]) then
                         TotemBar.evictDestroyedTotem(element)
+                    end
+                    return
+                end
+                -- Same recall-attribution race as the owned-name branch
+                -- above, for the generic "<Name> dies." fallback.
+                local snapshotRecs = TotemBar.pendingRecallSnapshotRecs()
+                if snapshotRecs then
+                    local snapElement = TotemBar.elementForDiesLineCandidate(snapshotRecs,
+                        TotemBar.TOTEM_ELEMENTS, diesName)
+                    if snapElement and TotemBar.verifyDiesLineDestruction(snapshotRecs[snapElement]) then
+                        TotemBar.evictFromRecallSnapshot(snapElement)
                     end
                 end
             end
@@ -1346,6 +1359,7 @@ if CreateFrame then
             -- events cannot cause a silent miss.
             local element = TotemBar.elementForGuid(TotemBar.activeTotems,
                 TotemBar.TOTEM_ELEMENTS, arg1, TotemBar.guidsEqual)
+            local unitName, ownerName, playerName = nil, nil, nil
             if not element and arg1 and type(UnitName) == "function" then
                 -- GUID-free fallback (2026-08-20 event tap: UnitName/owner
                 -- DO resolve at the exact death instant on this client, for
@@ -1353,9 +1367,9 @@ if CreateFrame then
                 -- see the CHAT_MSG_COMBAT_FRIENDLY_DEATH/UNIT_DIED fixture
                 -- pair) -- covers a totem whose GUID was never latched by
                 -- either latch path at all.
-                local unitName = UnitName(arg1)
-                local ownerName = UnitName(arg1 .. "owner")
-                local playerName = UnitName("player")
+                unitName = UnitName(arg1)
+                ownerName = UnitName(arg1 .. "owner")
+                playerName = UnitName("player")
                 element = TotemBar.elementForOwnedTotemName(TotemBar.activeTotems,
                     TotemBar.TOTEM_ELEMENTS, unitName, ownerName, playerName)
             end
@@ -1368,6 +1382,29 @@ if CreateFrame then
                 -- moment later" bug for the one case it exists to short-
                 -- circuit fastest.
                 TotemBar.evictDestroyedTotem(element)
+                return
+            end
+            -- Recall-attribution race (see "Recall-attribution vs.
+            -- destruction race" above): re-run both matches against the
+            -- pending recall snapshot, reusing whatever UnitName lookups
+            -- already ran above instead of re-querying the (by-now-gone)
+            -- unit a second time.
+            local snapshotRecs = TotemBar.pendingRecallSnapshotRecs()
+            if snapshotRecs then
+                local snapElement = TotemBar.elementForGuid(snapshotRecs,
+                    TotemBar.TOTEM_ELEMENTS, arg1, TotemBar.guidsEqual)
+                if not snapElement and arg1 and type(UnitName) == "function" then
+                    if not unitName then
+                        unitName = UnitName(arg1)
+                        ownerName = UnitName(arg1 .. "owner")
+                        playerName = UnitName("player")
+                    end
+                    snapElement = TotemBar.elementForOwnedTotemName(snapshotRecs,
+                        TotemBar.TOTEM_ELEMENTS, unitName, ownerName, playerName)
+                end
+                if snapElement then
+                    TotemBar.evictFromRecallSnapshot(snapElement)
+                end
             end
             return
         end
@@ -1512,6 +1549,80 @@ function TotemBar.restoreRecalledTotems()
         end
     end
     return restored
+end
+
+-- ===== Recall-attribution vs. destruction race =====
+--
+-- recallWipeActiveTotems above clears TotemBar.activeTotems immediately and
+-- keeps the pre-wipe records in TotemBar.lastRecallWipe.recs until the recall
+-- is attributed. If a totem that was JUST wiped dies server-side inside that
+-- same CAST_FAIL_WINDOW, the destruction handlers below (CHAT_MSG_COMBAT_
+-- FRIENDLY_DEATH / UNIT_DIED) look it up in TotemBar.activeTotems -- which is
+-- already empty for it -- so the eviction is a silent no-op and sets no
+-- tombstone. If the recall is THEN attributed as refused, restoreRecalledTotems
+-- puts the snapshot record back and the dead totem's countdown resumes. These
+-- two helpers let the destruction handlers reach into the still-pending
+-- snapshot with the exact same name/guid matches they already run against
+-- activeTotems, so a totem that died mid-attribution stays dead either way.
+
+-- The pending recall snapshot's records table, or nil if there is no recall
+-- wipe awaiting attribution right now (none at all, or it is already older
+-- than CAST_FAIL_WINDOW -- same staleness rule restoreRecalledTotems uses;
+-- an old snapshot means any subsequent event is unrelated to it).
+function TotemBar.pendingRecallSnapshotRecs()
+    local wiped = TotemBar.lastRecallWipe
+    if not wiped or not wiped.at or not wiped.recs then
+        return nil
+    end
+    if (GetTime() - wiped.at) > TotemBar.CAST_FAIL_WINDOW then
+        return nil
+    end
+    return wiped.recs
+end
+
+-- Evicts `element` from the pending recall snapshot (see above) instead of
+-- from TotemBar.activeTotems -- the wipe already cleared that table, so
+-- TotemBar.evictDestroyedTotem would no-op here. Removes the record from
+-- TotemBar.lastRecallWipe.recs so a later restoreRecalledTotems leaves this
+-- element alone, and tombstones it exactly like evictDestroyedTotem does, so
+-- pfUI's libtotem can't resurrect the display for it either.
+function TotemBar.evictFromRecallSnapshot(element)
+    local wiped = TotemBar.lastRecallWipe
+    if not wiped or not wiped.recs then
+        return
+    end
+    local rec = wiped.recs[element]
+    if not rec then
+        return
+    end
+    if rec.start and rec.duration then
+        TotemBar.destroyedTombstone[element] = rec.start + rec.duration
+    end
+    wiped.recs[element] = nil
+end
+
+-- Pure-ish (queries the live unit): runs the SAME "already exists, and either
+-- zero health or dead-or-ghost" verification the CHAT_MSG_COMBAT_FRIENDLY_
+-- DEATH generic "<Name> dies." fallback used inline before this was pulled
+-- out -- shared now so the recall-snapshot branch below runs the identical
+-- check instead of a second hand-copied one.
+function TotemBar.verifyDiesLineDestruction(rec)
+    if not rec then
+        return false
+    end
+    local exists, guid, health, deadOrGhost = nil, nil, nil, nil
+    if type(UnitExists) == "function" then
+        exists, guid = UnitExists(rec.guid)
+    end
+    if exists then
+        if type(UnitHealth) == "function" then
+            health = UnitHealth(rec.guid)
+        end
+        if type(UnitIsDeadOrGhost) == "function" then
+            deadOrGhost = UnitIsDeadOrGhost(rec.guid)
+        end
+    end
+    return TotemBar.totemDestroyed(exists, health, deadOrGhost)
 end
 
 -- Is at least one totem currently out? Used to avoid wasting Totemic Recall's

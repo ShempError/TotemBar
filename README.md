@@ -11,18 +11,17 @@ server data, not guesswork. No dependencies; adopts the
 
 <img src="screenshots/pulse-ui.png" alt="TotemBar in action: round slots with duration and pulse rings, totems placed in the world" width="100%">
 
-## What's new — v0.4.0 · 2026-08-30
+## What's new — v0.4.1 · 2026-08-31
 
-- **Destroyed totems are detected.** A totem killed before its timer ran out used to keep
-  counting down; now the death line (and, with SuperWoW/nampower, the cast and death events)
-  clears its countdown, ring, pulse and range tint. Live retest still pending.
-- **No phantom countdown on a cast refused for mana.** The Clearcasting exemption never
-  applied to totems and had silently disabled the mana gate.
-- **A refused Totemic Recall keeps your timers.** Only the Recall that actually went out clears
-  them; a press the server rejects restores what it had cleared.
+- **A totem destroyed inside the recall attribution window stays dead.** A totem the enemy
+  destroyed in the ~0.4s window between a Totemic Recall wipe and its refusal being attributed
+  no longer has its countdown resurrected by the refused-recall restore.
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.4.1** (2026-08-31) — a totem destroyed by the enemy inside the recall attribution
+  window now stays dead instead of coming back when a refused Totemic Recall restores its
+  timers.
 - **v0.4.0** (2026-08-30) — a totem destroyed before its timer ran out is now
   detected and cleared (countdown, ring, pulse and range tint together) instead
   of counting down as if it still stood; a totem cast refused for lack of mana

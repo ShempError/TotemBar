@@ -2,7 +2,7 @@
 ## Title: TotemBar
 ## Notes: Shaman totem bar - pick one totem per element, cast it, or spam-cycle all four from a macro.
 ## Author: ShempError
-## Version: 0.4.0
+## Version: 0.4.1
 ## SavedVariables: TotemBarDB
 
 core\totemdata.lua
