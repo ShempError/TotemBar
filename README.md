@@ -31,6 +31,11 @@ server data, not guesswork. No dependencies; adopts the
 
 **Version history** — details in [CHANGELOG.md](CHANGELOG.md):
 
+- **v0.4.0** (2026-08-30) — a totem destroyed before its timer ran out is now
+  detected and cleared (countdown, ring, pulse and range tint together) instead
+  of counting down as if it still stood; a totem cast refused for lack of mana
+  no longer starts a countdown (the Clearcasting exemption never applied to
+  totems); a Totemic Recall the server refuses no longer wipes your timers.
 - **v0.3.0** (2026-08-15) — element buttons and the flyout now dim totems you
   can't afford; a refused cast no longer starts a phantom countdown, and one
   that already started can now be taken back after the fact (narrowly, and

@@ -2,6 +2,82 @@
 
 All notable changes to TotemBar are documented here.
 
+## v0.4.0 — 2026-08-30
+
+### Added
+- **Destroyed totems can now be detected while SuperWoW is present (verified against captured
+  event log 2026-08-20, live eviction pending retest).** A totem killed before its timer ran
+  out used to keep counting down as if it were still standing — both TotemBar's own tracking
+  and pfUI's libtotem are blind, duration-only timers, and neither ever checked whether the
+  totem itself was still alive (pfUI's `GetTotemInfo` was previously assumed to cover this
+  case; checked against its source — it does not). A live event tap against the real client
+  (2026-08-20) captured totem spawn/pulse/death lines and found the original mechanism could
+  never have fired at all: the spawn/pulse latch paths compared totem names for *exact*
+  equality, but the live client hands back a *ranked* name ("Searing Totem VI"), never the bare
+  book name; and the pulse-cast latch mapped through the pulse *spell's* name ("Searing Bolt"),
+  which is not the totem's own name either. Both are now fixed, and a third, GUID-free signal
+  was added as the primary path:
+  1. **Primary — `CHAT_MSG_COMBAT_FRIENDLY_DEATH`** (native 1.12, needs no SuperWoW/nampower):
+     TurtleWoW emits a totem's own death as `"<Name> (<Owner>) is destroyed."` verbatim; parsed
+     and evicted once the owner resolves to the player and the name rank-tolerantly matches a
+     tracked totem. The generic vanilla `"<Name> dies."` form is accepted as a second, stricter
+     shape — since it carries no owner, it only evicts a candidate that already has a latched
+     GUID, confirmed via a live `UnitExists`/`UnitHealth`/`UnitIsDeadOrGhost` read.
+  2. **`UNIT_CASTEVENT`** (SuperWoW), for totems that periodically cast their own pulse — now
+     keyed off `UnitName(casterGUID)` (the totem unit's own, rank-tolerant name) instead of the
+     pulse spell's name; covers only pulsing totems (Searing/Magma/Fire Nova/Mana Spring/
+     Healing Stream/Mana Tide/the Cleansing totems), gated on the caster's resolved owner
+     matching the player.
+  3. **`UNIT_MODEL_CHANGED`** (native 1.12), for totems that never cast anything visible — now
+     rank-tolerant instead of an exact name compare.
+  4. **`UNIT_DIED`** (nampower), extended with a GUID-free fallback: when no GUID was ever
+     latched, a rank-tolerant name + owner match at the death instant (both resolve reliably
+     there per the captured log) still evicts.
+
+  A totem confirmed destroyed is evicted immediately and tombstoned for the remainder of its
+  own natural duration, so pfUI's libtotem — itself just another blind timer — cannot
+  resurrect the countdown/ring/pulse a moment later; a real re-cast on that element clears the
+  tombstone right away. This clears the countdown, duration ring, pulse animation and
+  out-of-range tint together, since all four already derive from the same tracking record. On
+  a client without SuperWoW, only the primary `CHAT_MSG_COMBAT_FRIENDLY_DEATH` signal is
+  active; without either SuperWoW or TurtleWoW's own death-line wording, behaviour is
+  byte-for-byte unchanged from before this feature. The decision logic (name matching, line
+  parsing, eviction gating) is fully offline-tested against the captured fixture lines (95
+  assertions in `tools/luatests/test_destroy.lua`); a live totem-kill retest with the addon
+  in the loop is still pending — `/tb tdump` prints each totem's latched `guid`, the raw
+  `UnitExists`/`UnitHealth`/`UnitIsDeadOrGhost` reads, and (for an evicted slot) its tombstone
+  status, for that verification.
+
+### Fixed
+- **A totem's countdown no longer starts when the cast was refused for lack of mana.** The
+  pre-cast mana gate stood down completely while Clearcasting (Elemental Focus) was up, on the
+  assumption that it zeroes the next cast's price. Elemental Focus covers the shaman's damage
+  spells, not totem summons -- so a totem costs full mana while Clearcasting is up, and since
+  totems are the only thing this addon casts, that exemption disabled the mana gate outright.
+  The client then refused the cast while the timer had already been recorded, leaving a
+  countdown running for a totem that was never placed. The exemption is gone from the cast
+  gate, the out-of-mana dim and the flyout tint alike; the unverified buff-icon constant it
+  relied on went with it. The gate still accepts (and ignores) the old sixth argument, so no
+  stale caller can quietly reinstate it.
+
+- **A Totemic Recall the server refuses no longer wipes your totem timers.**
+  Recall already checked whether the cast could go out *before* touching the
+  tracking, but a press that passes that check can still be refused after the
+  fact — moving at the wrong moment, a stun or silence landing first, or plain
+  latency. The tracking was cleared unconditionally the instant the cast was
+  issued, so a refused Recall left the addon believing nothing was out while a
+  full set kept standing — the same phantom-state bug class the totem casts'
+  own two-layer guard already closed, mirrored. The recall paths now remember
+  what they cleared, and the same failure signals that take back a refused
+  totem's countdown (the exact per-spell one with nampower, the error-message
+  fallback without it) put the timers back. The restore follows the same
+  narrow rules as the totem-cast revoke: only when the Recall itself was the
+  last cast attempted, only within a short window afterward, and never over a
+  slot a new cast has already refilled — when attribution is uncertain it
+  stays silent, since here a *wrongly restored* timer would be the phantom.
+  Covers the Recall button, its keybind, and the DropSet keybind's recall
+  stroke alike.
+
 ## v0.3.0 — 2026-08-15
 
 ### Added

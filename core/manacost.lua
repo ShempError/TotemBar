@@ -73,23 +73,14 @@ function TotemBar.notEnoughMana(cost, mana)
     return mana < cost
 end
 
--- Clearcasting (Elemental Focus) makes the next damage spell free while the
--- tooltip still shows the full price, so every mana verdict has to stand down
--- while it is up -- otherwise the bar greys out a totem that casts fine and the
--- cast gate drops its timer.
---
--- Matched by buff ICON, like the out-of-range tint's totem detection (see
--- TotemBar.hasBuffWithIcon): 1.12 gives no buff NAME without a tooltip scan per
--- buff per check. VERIFY in-game -- if this icon is wrong the only effect is
--- that the two features lose their Clearcasting exemption, not that they break.
-TotemBar.CLEARCAST_ICON = "Spell_Shadow_ManaBurn"
-
-function TotemBar.hasClearcasting()
-    if not TotemBar.hasBuffWithIcon then
-        return false
-    end
-    return TotemBar.hasBuffWithIcon(TotemBar.CLEARCAST_ICON)
-end
+-- Clearcasting (Elemental Focus) used to exempt every mana verdict here. That was
+-- WRONG and is gone (2026-08-28, player-reported): Elemental Focus zeroes the next
+-- DAMAGE spell, not a totem summon, so a totem costs full price while Clearcasting
+-- is up. Because totems are the only thing this addon casts, the exemption
+-- disabled the mana gate and the out-of-mana dim outright whenever the buff was
+-- up. TotemBar.hasClearcasting/CLEARCAST_ICON were removed with it -- the icon was
+-- never verified in-game and now has no consumer. TotemBar.hasBuffWithIcon stays:
+-- the out-of-range tint still uses it.
 
 -- Live mana verdict for one totem by name: true only when its cost is known,
 -- the player's mana is below it, and no Clearcasting is up. Reads the cached
@@ -97,9 +88,6 @@ end
 -- UnitMana call -- cheap enough for the 5Hz display tick that calls it.
 function TotemBar.totemOutOfMana(name)
     if not name or type(UnitMana) ~= "function" then
-        return false
-    end
-    if TotemBar.hasClearcasting() then
         return false
     end
     return TotemBar.notEnoughMana(TotemBar.getTotemManaCost(name), UnitMana("player"))

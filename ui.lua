@@ -53,6 +53,14 @@ TotemBar.BAR_LAYOUTS = { "1x6", "2x3", "3x2" }
 local TIMER_UPDATE_INTERVAL = 0.1
 local timerElapsed = 0
 
+-- Destroyed-totem liveness poll throttle (see TotemBar.GUID_LIVENESS_POLL_INTERVAL,
+-- core/cast.lua): a SLOWER gate layered on top of the 0.1s tick above, so
+-- UnitExists/UnitHealth/UnitIsDeadOrGhost are only actually called once
+-- every ~0.5s even though UpdateTimerDisplays itself runs 10x/sec. GetTime()-based
+-- rather than an arg1 accumulator since UpdateTimerDisplays has no frame
+-- delta of its own to accumulate.
+local lastGuidLivenessCheck = nil
+
 -- Fallback icon for an unresolved/unknown totem name (flyout icons,
 -- ResolveTotemIcon, the pending-assignment panel). Element buttons' own
 -- empty-slot state uses the custom sheet's per-element glyph instead
@@ -709,14 +717,12 @@ RefreshFlyoutMana = function()
         return
     end
     local playerMana = (type(UnitMana) == "function") and UnitMana("player") or nil
-    local clearcasting = TotemBar.hasClearcasting and TotemBar.hasClearcasting()
     for i = 1, MAX_FLYOUT_ICONS do
         local ico = flyoutIcons[i]
         if ico:IsShown() and ico.totemName then
-            local oom = false
-            if not clearcasting then
-                oom = TotemBar.notEnoughMana(TotemBar.getTotemManaCost(ico.totemName), playerMana)
-            end
+            -- No Clearcasting exemption (2026-08-28): Elemental Focus does not
+            -- cover totems, see core/manacost.lua.
+            local oom = TotemBar.notEnoughMana(TotemBar.getTotemManaCost(ico.totemName), playerMana)
             local r, g, b, key = TotemBar.iconTintFor(false, oom)
             if key ~= ico.tintKey then
                 ico.icon:SetVertexColor(r, g, b)
@@ -1388,11 +1394,21 @@ UpdateTimerDisplays = function()
     local activeTotems = TotemBar.activeTotems
     local outOfRangeFound = false     -- OR-accumulator across this pass; written to anyOutOfRange at the end
 
-    -- Mana inputs for the out-of-mana dim, read ONCE per pass rather than per
-    -- button: hasClearcasting walks the player's buffs, and there is no reason
-    -- to do that four times for one tick.
+    -- Destroyed-totem liveness poll gate for this pass (see local
+    -- lastGuidLivenessCheck above and TotemBar.GUID_LIVENESS_POLL_INTERVAL,
+    -- core/cast.lua) -- computed ONCE per call, not per element, so all four
+    -- slots share the same ~0.5s cadence.
+    local doLivenessPoll = TotemBar.shouldPollLiveness(lastGuidLivenessCheck, now,
+        TotemBar.GUID_LIVENESS_POLL_INTERVAL)
+    if doLivenessPoll then
+        lastGuidLivenessCheck = now
+    end
+
+    -- Mana input for the out-of-mana dim, read ONCE per pass rather than per
+    -- button. (The Clearcasting buff walk that used to sit here is gone with the
+    -- exemption itself -- Elemental Focus does not cover totems, see
+    -- core/manacost.lua -- so this pass no longer scans buffs at all.)
     local playerMana = (type(UnitMana) == "function") and UnitMana("player") or nil
-    local clearcasting = TotemBar.hasClearcasting and TotemBar.hasClearcasting()
 
     for i = 1, table.getn(elements) do
         local element = elements[i]
@@ -1408,6 +1424,48 @@ UpdateTimerDisplays = function()
                     activeTotems[element] = nil
                     ownRemaining = nil
                     ownRecord = nil     -- expired: not "active" for the range-tint check below either
+                end
+            end
+
+            -- Destroyed-totem liveness poll: only runs once a GUID was
+            -- latched (core/cast.lua's UNIT_CASTEVENT/UNIT_MODEL_CHANGED
+            -- hooks) AND this pass is due (doLivenessPoll, ~0.5s cadence).
+            -- On a client without SuperWoW no record ever gets a guid, so
+            -- this is a no-op there -- today's behaviour, unchanged. A
+            -- destroyed verdict clears the record the SAME way natural
+            -- expiry does above, so the countdown text, duration ring,
+            -- pulse animation and out-of-range tint below all disappear in
+            -- one step -- they already derive from ownRecord's presence.
+            if ownRecord and ownRecord.guid and doLivenessPoll then
+                local exists, guid = nil, nil
+                if type(UnitExists) == "function" then
+                    exists, guid = UnitExists(ownRecord.guid)
+                end
+                local health, deadOrGhost = nil, nil
+                if exists then
+                    if type(UnitHealth) == "function" then
+                        health = UnitHealth(ownRecord.guid)
+                    end
+                    if type(UnitIsDeadOrGhost) == "function" then
+                        deadOrGhost = UnitIsDeadOrGhost(ownRecord.guid)
+                    end
+                end
+                if TotemBar.totemDestroyed(exists, health, deadOrGhost) then
+                    -- Tombstones the element (see TotemBar.evictDestroyedTotem /
+                    -- TotemBar.destroyedTombstone, core/cast.lua) so
+                    -- resolveRemaining below stops trusting GTI for it until
+                    -- the evicted record's own natural expiry -- otherwise
+                    -- pfUI's libtotem (itself just another blind duration
+                    -- timer) keeps reporting the SAME destroyed totem active
+                    -- and the countdown/ring/pulse reappear from the GTI
+                    -- branch a moment after being cleared here (adversarial-
+                    -- review finding #1). Mutates TotemBar.activeTotems, the
+                    -- SAME table `activeTotems` above already points to, so
+                    -- ownRecord/ownRemaining are nil'd out explicitly to
+                    -- match rather than re-reading it.
+                    TotemBar.evictDestroyedTotem(element)
+                    ownRemaining = nil
+                    ownRecord = nil
                 end
             end
 
@@ -1453,7 +1511,19 @@ UpdateTimerDisplays = function()
                 end
             end
 
-            local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
+            -- Destroyed-totem tombstone (adversarial-review finding #1, see
+            -- TotemBar.evictDestroyedTotem above and TotemBar.tombstoneActive/
+            -- resolveRemaining, core/cast.lua): while active, resolveRemaining
+            -- below must not trust GTI for this element even though hasGTI/
+            -- gtiActive above were computed with no knowledge of the eviction.
+            -- Swept once expired so the table never holds a stale entry past
+            -- its own usefulness (bounded to 4 keys regardless, but tidy).
+            local tombstoned = TotemBar.tombstoneActive(TotemBar.destroyedTombstone[element], now)
+            if not tombstoned and TotemBar.destroyedTombstone[element] then
+                TotemBar.destroyedTombstone[element] = nil
+            end
+
+            local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining, tombstoned)
 
             if remainingVal and TotemBarDB.showTimerText then
                 if not btn.timerVisible then
@@ -1604,7 +1674,7 @@ UpdateTimerDisplays = function()
             -- whichever ran last would win (see TotemBar.iconTintFor).
             local chosenName = TotemBarDB.chosen and TotemBarDB.chosen[element]
             local oom = false
-            if chosenName and not clearcasting then
+            if chosenName then
                 oom = TotemBar.notEnoughMana(TotemBar.getTotemManaCost(chosenName), playerMana)
             end
 
@@ -1850,7 +1920,11 @@ function TotemBar.DumpRingRenderState()
                     end
                 end
             end
-            local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
+            -- Same tombstone read UpdateTimerDisplays' live pass does (see
+            -- its own comment) -- read-only here, the live pass owns
+            -- sweeping expired entries.
+            local tombstoned = TotemBar.tombstoneActive(TotemBar.destroyedTombstone[element], now)
+            local remainingVal = TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining, tombstoned)
             local totalDur = TotemBar.resolveDuration(gtiActive, gtiRemaining, gtiDuration,
                 ownRemaining, ownRecord and ownRecord.duration)
             local idxStr = "n/a"
@@ -1871,7 +1945,8 @@ function TotemBar.DumpRingRenderState()
                 .. " | recompute: remainingVal=" .. tostring(remainingVal)
                 .. " totalDur=" .. tostring(totalDur)
                 .. " ringIdx=" .. idxStr
-                .. " timeColor=" .. colorStr .. "\n"
+                .. " timeColor=" .. colorStr
+                .. " tombstoned=" .. tostring(tombstoned) .. "\n"
 
             -- Control group: the countdown text the player actually sees, so a
             -- mismatch (text shown, ring both cached+live hidden) pins the
@@ -2526,8 +2601,11 @@ local function HandleSlashCommand(msg)
     elseif string.find(cmd, "^pulsecal") then
         local _, _, sub = string.find(cmd, "^pulsecal%s*(%a*)")
         if TotemBar.PulseCal then TotemBar.PulseCal(sub or "") end
+    elseif string.find(cmd, "^tprobe") then
+        local _, _, sub = string.find(cmd, "^tprobe%s*(%a*)")
+        if TotemBar.TProbe then TotemBar.TProbe(sub or "") end
     else
-        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options, /tb bind, /tb manadump, /tb tdump, /tb pulsecal")
+        ChatOut:AddMessage("TotemBar: unknown command '" .. msg .. "'. Usage: /tb, /tb lock, /tb scan, /tb assign, /tb options, /tb bind, /tb manadump, /tb tdump, /tb pulsecal, /tb tprobe")
     end
 end
 

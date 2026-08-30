@@ -31,6 +31,13 @@ TotemBar.RECALL_OVERRIDE_MAX = 5
 -- persists them to TotemBarDB.buttonGap (core/config.lua).
 TotemBar.DEFAULT_BUTTON_GAP = 10
 
+-- Destroyed-totem GUID-liveness poll interval (seconds). Throttled
+-- independently of ui.lua's faster 0.1s display tick (see
+-- UpdateTimerDisplays) -- UnitExists/UnitHealth/UnitIsDeadOrGhost are cheap
+-- but there is no reason to call them 10x/sec once a GUID is latched. See
+-- "Destroyed-totem detection (GUID liveness)" below for the full design.
+TotemBar.GUID_LIVENESS_POLL_INTERVAL = 0.5
+
 -- Cycle state: which slot was cast last, and when.
 TotemBar.castState = TotemBar.castState or {
     index = 0,      -- 0 = no cast yet (or state was reset)
@@ -43,6 +50,20 @@ TotemBar.castState = TotemBar.castState or {
 -- present, or reports a given slot inactive. element -> {start=,
 -- duration=}, both in TotemBar.recordCast() below.
 TotemBar.activeTotems = TotemBar.activeTotems or {}
+
+-- element -> the GetTime() a destroy-evicted record would naturally have
+-- expired at (its own start+duration). Set by ui.lua's liveness poll the
+-- moment it evicts a destroyed totem; read by resolveRemaining (via
+-- TotemBar.tombstoneActive) to stop trusting pfUI's libtotem for that
+-- element until then -- libtotem is ALSO just a blind duration timer (see
+-- "Destroyed-totem detection (GUID liveness)" below), so without this it
+-- keeps reporting the destroyed totem active and the countdown/ring/pulse
+-- reappear from the GTI branch even though activeTotems[element] was
+-- correctly cleared. Cleared the moment a real recordCast lands on the
+-- element again (see recordCast below) or once GetTime() passes the
+-- stored expiry (ui.lua sweeps it then) -- bounded to at most 4 keys
+-- either way, never a growing table.
+TotemBar.destroyedTombstone = TotemBar.destroyedTombstone or {}
 
 -- Pure: given the previously cast slot index, the time of that previous
 -- cast, the current time, the allowed gap (seconds) and the number of
@@ -120,20 +141,43 @@ end
 -- otherwise (absent, or reporting the slot inactive) falls back to
 -- TotemBar's own cast-tracking. Returns nil when neither source has
 -- time left.
-function TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining)
+function TotemBar.resolveRemaining(gtiActive, gtiRemaining, ownRemaining, tombstoned)
     -- FIX 2026-07-15: trust GTI (pfUI libtotem) ONLY when it reports the slot active
     -- AND with positive time left. Previously a stale-active GTI slot (active but
     -- gtiRemaining<=0 -- libtotem evicts lazily on read) hit the bare `return nil` and
     -- BLOCKED the timer even when own-tracking had a valid time. That produced the
     -- Fire/Earth-dead, Air-flickering, Water-ok pattern (pfUI's single non-slot-indexed
     -- cast queue loses the race for the slots cast later in a multi-drop).
-    if gtiActive and gtiRemaining and gtiRemaining > 0 then
+    --
+    -- FIX (destroyed-totem review, adversarial-review finding #1): `tombstoned`
+    -- (see TotemBar.tombstoneActive/TotemBar.destroyedTombstone) forces this to
+    -- skip the GTI branch entirely for a totem this addon just evicted as
+    -- destroyed. Without it, a destroy-eviction cleared ownRemaining/ownRecord
+    -- correctly but pfUI's libtotem -- itself just another blind duration timer,
+    -- see the header comment above TotemBar.shouldLatchGuidFromCastEvent below
+    -- -- kept reporting the SAME destroyed totem active until ITS OWN timer ran
+    -- out, so the countdown/ring/pulse reappeared from the GTI branch a moment
+    -- after this addon had just cleared them. tombstoned=nil/false (every
+    -- existing call site before this fix) reproduces the old behaviour exactly.
+    if not tombstoned and gtiActive and gtiRemaining and gtiRemaining > 0 then
         return gtiRemaining
     end
     if ownRemaining and ownRemaining > 0 then
         return ownRemaining
     end
     return nil
+end
+
+-- Pure: is element's destroyed-tombstone still in effect? tombstoneExpiry is
+-- TotemBar.destroyedTombstone[element] (nil if none), the GetTime() the
+-- destroy-evicted record would naturally have expired at. Strictly less-than:
+-- at the exact expiry moment GTI is trusted again (by then GTI's own blind
+-- timer would have run out too, so there is nothing left to falsely resurrect).
+function TotemBar.tombstoneActive(tombstoneExpiry, now)
+    if not tombstoneExpiry or not now then
+        return false
+    end
+    return now < tombstoneExpiry
 end
 
 -- Pure: should the out-of-range red tint treat this element as ACTIVE?
@@ -156,6 +200,359 @@ function TotemBar.rangeTintActive(hasOwnRecord, hasGTI, gtiTracked, gtiActive)
         return false
     end
     return true
+end
+
+-- ===== Destroyed-totem detection (GUID liveness) =====
+--
+-- Everything above (rangeTintActive included) can tell a totem is out of
+-- the PLAYER's own buff range, but nothing in this file -- nor pfUI's
+-- libtotem (checked against its source, pfUI/libs/libtotem.lua:
+-- GetTotemInfo's "active" flag is ALSO just a blind start+duration timer,
+-- cleared only on natural expiry or PLAYER_DEAD, never on the totem
+-- actually dying) -- can tell that a totem was DESTROYED (killed by an
+-- enemy, an AoE, a dispel) before its timer ran out. Fixing that needs the
+-- totem's own GUID, which recordCast cannot know at cast time (1.12 gives
+-- no return value naming the newly summoned unit); it is latched
+-- OPPORTUNISTICALLY after the fact by the event hooks further below, once a
+-- GUID becomes observable through the client's own SuperWoW telemetry:
+--
+--   1. UNIT_CASTEVENT (SuperWoW): a totem that periodically CASTS its
+--      pulse (Fire Nova, Magma, Mana Spring, Healing Stream, Mana Tide, the
+--      Cleansing totems, ...) fires this with its own GUID as casterGUID
+--      the first time it pulses -- the same event core/pulsecal.lua already
+--      observes for calibration telemetry; this just also keeps the GUID.
+--      COVERAGE: pulsing totems only -- a totem that never casts anything
+--      never latches through this path. CONFIRMED (2026-08-20 event tap)
+--      that casterGUID (arg1) resolves via UnitName to the TOTEM's own name
+--      -- but the pulse SPELL's own name (arg4/SpellInfo) does NOT equal the
+--      totem's name (a Searing Totem's pulse is "Searing Bolt", Healing
+--      Stream Totem's is "Healing Stream") -- the original elementFromCastName
+--      exact-match-on-spell-name mapping was structurally unable to latch
+--      ANYTHING. Fixed: latch now maps through UnitName(arg1) (rank-tolerant,
+--      TotemBar.totemNameMatches), not the spell name at all. Also gated on
+--      the caster's resolved "owner" matching the player
+--      (TotemBar.shouldLatchGuidFromCastEvent) -- see that function's own
+--      comment for why (a stranger's same-named totem must never latch
+--      here); "<unit>owner" resolving for a SuperWoW casterGUID is still
+--      UNVERIFIED (the tap did not include another shaman's totem nearby).
+--   2. UNIT_MODEL_CHANGED (native 1.12): fallback for totems that never
+--      cast anything visible (Stoneskin, Strength of Earth, Grace of Air,
+--      Windwall, Sentry, Grounding-until-triggered). CONFIRMED (2026-08-20
+--      event tap) that it fires on totem spawn with UnitName(unit) resolving
+--      to the totem's own RANKED name ("Searing Totem VI", "Magma Totem
+--      IV" -- single-rank totems like Tremor Totem carry no suffix at all) --
+--      the original exact-match against the bare book name could therefore
+--      never latch a ranked totem. Fixed via TotemBar.totemNameMatches
+--      (rank-tolerant). Whether "<unit>owner" resolves the totem's owner on
+--      this client is still UNVERIFIED -- the handler stays fail-open (any
+--      missing piece just means no latch, never a false one).
+--
+-- Neither latch path is guaranteed to fire for every totem -- a record that
+-- never gets a rec.guid simply never runs the liveness poll below and keeps
+-- today's blind-timer behaviour, UNLESS the GUID-free destruction signals
+-- below (CHAT_MSG_COMBAT_FRIENDLY_DEATH / UNIT_DIED fallback) catch it
+-- instead -- see "Rank-tolerant name match + destruction signals" further
+-- down for those and for what the 2026-08-20 tap confirmed/fixed. This is
+-- additive, never a regression, and needs zero SuperWoW/nampower presence
+-- checks of its own: every path that touches a WoW global here already
+-- guards it.
+
+-- Pure: given a UNIT_CASTEVENT's resolved totem name (UnitName(casterGUID)
+-- -- the totem UNIT's own name, ranked, NOT the pulse spell's name; see the
+-- 2026-08-20 event-tap header comment further below for why this is keyed
+-- off the unit and not SpellInfo(arg4) any more), the element's CURRENT
+-- tracked record (or nil), the resolved "owner" of the casting unit
+-- (UnitName(casterGUID .. "owner"), see the UNIT_MODEL_CHANGED pendant
+-- below for the same idea) and the player's own name, should this event
+-- latch its casterGUID onto that record?
+--
+-- The owner check exists because totem NAME alone is not unique: another
+-- shaman standing nearby with the same totem type pulsing at the same
+-- moment resolves to the SAME element/name match. Without verifying
+-- ownership, this event could latch a STRANGER's totem GUID onto our own
+-- element -- and when THEIR totem dies, the liveness poll would evict OUR
+-- still-standing one (a regression strictly worse than not having this
+-- feature at all). ownerName/playerName may be nil (out of range,
+-- unsupported "<unit>owner" token, ...) -- that fails CLOSED, i.e. no
+-- latch, same policy as everywhere else in this file: a totem that never
+-- gets a guid just keeps today's blind-timer behaviour, which can never
+-- falsely evict.
+--
+-- Otherwise latches for the exact totem currently tracked (rank-tolerant,
+-- TotemBar.totemNameMatches -- the ranked unit name vs. the bare book name),
+-- and only once -- a record that already has a guid keeps it (the first
+-- pulse that resolves it wins; re-checking a later pulse from the SAME
+-- totem would just repeat the same GUID anyway).
+function TotemBar.shouldLatchGuidFromCastEvent(rec, castTotemName, ownerName, playerName)
+    if not rec or rec.guid then
+        return false
+    end
+    if not castTotemName or not ownerName or not playerName then
+        return false
+    end
+    if not TotemBar.totemNameMatches(rec.totemName, castTotemName) then
+        return false
+    end
+    return ownerName == playerName
+end
+
+-- Pure: given a UNIT_MODEL_CHANGED unit's resolved name (ranked, e.g.
+-- "Searing Totem VI" -- see the 2026-08-20 event-tap header comment further
+-- below), its resolved "owner" name and the player's own name, should the
+-- caller try to latch a GUID onto `rec` (the element whose totemName
+-- rank-tolerantly matches unitName, TotemBar.totemNameMatches)? Every input
+-- may be nil/empty; missing information never latches -- fail open, same
+-- policy as every other gate in this file.
+function TotemBar.shouldLatchGuidFromModelChanged(rec, unitName, ownerName, playerName)
+    if not rec or rec.guid then
+        return false
+    end
+    if not unitName or not ownerName or not playerName then
+        return false
+    end
+    if not TotemBar.totemNameMatches(rec.totemName, unitName) then
+        return false
+    end
+    return ownerName == playerName
+end
+
+-- Pure: normalizes a GUID string for tolerant comparison -- lowercased, and
+-- with a leading "0x"/"0X" prefix stripped if present. UNIT_CASTEVENT and
+-- UNIT_DIED are not guaranteed to format GUIDs identically (only confirmed
+-- that SOME SuperWoW events use a "0x"-prefixed hex string); comparing
+-- normalized forms avoids a silent non-match between the two sources.
+function TotemBar.normalizeGuid(guid)
+    if not guid then
+        return nil
+    end
+    if type(guid) ~= "string" then
+        guid = tostring(guid)
+    end
+    local lowered = string.lower(guid)
+    local _, _, stripped = string.find(lowered, "^0x(.+)$")
+    return stripped or lowered
+end
+
+-- Pure: do two GUIDs (in whatever raw form each source handed us) refer to
+-- the same unit? nil on either side never matches.
+function TotemBar.guidsEqual(a, b)
+    local na = TotemBar.normalizeGuid(a)
+    local nb = TotemBar.normalizeGuid(b)
+    if not na or not nb then
+        return false
+    end
+    return na == nb
+end
+
+-- Pure: which element (if any) currently has a latched rec.guid matching
+-- rawGuid? Used by the UNIT_DIED handler further below, which -- unlike the
+-- latch paths above -- must NOT resolve unit names at the moment of death
+-- (see that handler's own comment for why): the raw GUID is all it has to
+-- go on. Scans the fixed 4-element table each time rather than keeping a
+-- separate guid->element map, so there is nothing extra to keep in sync or
+-- leak. equalFn is injected (TotemBar.guidsEqual in production, the same
+-- tolerant-comparison function the rest of this module uses) so this stays
+-- offline-testable without any WoW-side GUID assumptions baked in.
+function TotemBar.elementForGuid(activeTotems, elements, rawGuid, equalFn)
+    if not activeTotems or not rawGuid then
+        return nil
+    end
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local rec = activeTotems[element]
+        if rec and rec.guid and equalFn(rec.guid, rawGuid) then
+            return element
+        end
+    end
+    return nil
+end
+
+-- Pure: given the raw (exists, health, deadOrGhost) tuple a liveness poll
+-- just read for a totem's GUID, was the totem destroyed? `exists` gates
+-- everything else: SuperWoW can only resolve a GUID it currently has in
+-- range/visibility, so "does not exist" is UNKNOWN (out of range, zoned
+-- away, simply not yet resolved -- the same class of read any GUID-liveness
+-- scanner has to guard identically), never "destroyed". Only once the unit
+-- DOES resolve does a zero health read or UnitIsDeadOrGhost==1 count as a
+-- verdict. Fails open on the unknown case, same policy as every other gate
+-- in this file: a totem merely out of visibility keeps its timer running
+-- exactly like it does today, instead of the poll wrongly clearing a totem
+-- that is still alive.
+function TotemBar.totemDestroyed(exists, health, deadOrGhost)
+    if not exists then
+        return false
+    end
+    if health == 0 or deadOrGhost == 1 then
+        return true
+    end
+    return false
+end
+
+-- Pure: should the liveness poll actually touch UnitExists/UnitHealth/
+-- UnitIsDeadOrGhost this tick? Throttled to TotemBar.GUID_LIVENESS_POLL_INTERVAL,
+-- independent of ui.lua's faster 0.1s display tick that calls this every
+-- pass. nil lastCheckTime (first call) always polls.
+function TotemBar.shouldPollLiveness(lastCheckTime, now, interval)
+    if not lastCheckTime then
+        return true
+    end
+    if not interval then
+        return true
+    end
+    return (now - lastCheckTime) >= interval
+end
+
+-- Evicts activeTotems[element] as DESTROYED, tombstoning the element so
+-- resolveRemaining ignores pfUI's libtotem for it until the evicted
+-- record's own natural expiry (see TotemBar.destroyedTombstone/
+-- tombstoneActive above) -- without this, libtotem's OWN blind timer keeps
+-- reporting the same destroyed totem active and the countdown/ring/pulse
+-- reappear from the GTI branch a moment after being correctly cleared here.
+-- Shared by ui.lua's liveness poll and the UNIT_DIED fast-path below, so
+-- both eviction routes protect the display identically -- not pure (reads/
+-- writes the two live tracking tables directly), same category as
+-- TotemBar.clearActiveTotems further below.
+function TotemBar.evictDestroyedTotem(element)
+    local rec = TotemBar.activeTotems[element]
+    if not rec then
+        return
+    end
+    if rec.start and rec.duration then
+        TotemBar.destroyedTombstone[element] = rec.start + rec.duration
+    end
+    TotemBar.activeTotems[element] = nil
+end
+
+-- ===== Rank-tolerant name match + destruction signals (2026-08-20 event tap) =====
+--
+-- A live event tap against the real client (2026-08-20) confirmed and killed
+-- three of this section's own "UNVERIFIED" caveats above, and supplied the
+-- fix for each:
+--
+--   (a) UNIT_MODEL_CHANGED's UnitName(unit) is RANKED ("Searing Totem VI"),
+--       never the bare book name recordCast stores (rec.totemName ==
+--       "Searing Totem") -- shouldLatchGuidFromModelChanged's exact `==`
+--       compare could never latch a ranked totem at all. Fixed by
+--       TotemBar.totemNameMatches below (single-rank totems like "Tremor
+--       Totem" have no suffix and still match via plain equality).
+--   (b) UNIT_CASTEVENT's resolved SPELL name is NOT the totem's own name
+--       (a Searing Totem's pulse is "Searing Bolt", Healing Stream Totem's
+--       is "Healing Stream", ...) -- shouldLatchGuidFromCastEvent's mapping
+--       through SpellInfo(arg4)/elementFromCastName was structurally unable
+--       to match. Fixed by mapping through UnitName(arg1) instead (arg1 is
+--       the TOTEM's own casterGUID) -- the SpellInfo path is no longer
+--       needed as an additional condition for this latch.
+--   (c) TurtleWoW emits a totem's own death as
+--       `CHAT_MSG_COMBAT_FRIENDLY_DEATH` with arg1 literally
+--       "<Name> (<Owner>) is destroyed." -- a GUID-free, PvP-safe primary
+--       signal that needs neither latch path above to have ever fired.
+--       TotemBar.parseDestroyedLine/elementForOwnedTotemName below.
+--
+-- Still unconfirmed: live in-game EVICTION on an actual destroy (the tap
+-- captured spawn/pulse/death lines, not a full addon-in-the-loop retest) --
+-- see CHANGELOG.md's Unreleased entry for the precise envelope.
+--
+-- Every totem this addon tracks is stored under its bare spellbook name
+-- (rec.totemName, set by recordCast from the spellbook/tooltip scan -- see
+-- recordCast above); TurtleWoW's live client hands back the RANKED display
+-- name ("Searing Totem VI") for both UNIT_MODEL_CHANGED's UnitName(unit) and
+-- the destroy/death chat lines below, but a single-rank totem like Tremor
+-- Totem carries no suffix at all.
+
+-- Pure: does `unitName` (a live client name, possibly rank-suffixed) refer
+-- to the SAME totem `recName` (this addon's own bare spellbook name)? True
+-- on an exact match, or when unitName is recName plus " " and a trailing
+-- roman-numeral rank ("Searing Totem VI" matches "Searing Totem"). The rank
+-- character class ([IVXLC]) matches core/pulseparse.lua's own stripRank --
+-- one convention for "what a rank suffix looks like" project-wide, not a
+-- fresh decision here. Anchored ($) so a totem name that merely STARTS with
+-- recName ("Searing Totem of Doom") never false-matches: the leftover after
+-- stripping a trailing roman-numeral token must be nothing else. nil-safe.
+function TotemBar.totemNameMatches(recName, unitName)
+    if not recName or not unitName then
+        return false
+    end
+    if unitName == recName then
+        return true
+    end
+    local _, _, base = string.find(unitName, "^(.-)%s+[IVXLC]+$")
+    return base == recName
+end
+
+-- Pure: parses TurtleWoW's own totem-death chat line, e.g.
+-- `Searing Totem VI (Playername) is destroyed.` -> "Searing Totem VI", "Playername".
+-- Returns nil, nil for any line that doesn't fit the exact shape (including
+-- the generic vanilla "<Name> dies." form -- see parseDiesLine below for
+-- that one). Lua 5.0: string.find with captures, parens/period escaped --
+-- never string.match (nil-call on this interpreter, see project rules).
+function TotemBar.parseDestroyedLine(line)
+    if not line then
+        return nil, nil
+    end
+    local _, _, name, owner = string.find(line, "^(.-) %((.-)%) is destroyed%.$")
+    return name, owner
+end
+
+-- Pure: parses the generic vanilla "<Name> dies." combat line -> "<Name>",
+-- or nil if the line doesn't fit that shape. Deliberately carries no owner
+-- (vanilla's own death line has none) -- see elementForDiesLineCandidate
+-- below for why that makes this fallback path need its own, stricter gate.
+function TotemBar.parseDiesLine(line)
+    if not line then
+        return nil
+    end
+    local _, _, name = string.find(line, "^(.-) dies%.$")
+    return name
+end
+
+-- Pure: which element (if any) has an active, OWN record whose totemName
+-- rank-tolerantly matches `name`, given that `ownerName` was resolved as
+-- the player's own name? Used both for the destroyed-line's parsed
+-- (name, owner) pair (GUID-free -- the destroy chat line alone is enough)
+-- and UNIT_DIED's GUID-free fallback (see the guidFrame handler below) --
+-- same shape, same fail-closed policy as every latch gate in this file: a
+-- missing/foreign owner or no name match never evicts. Scans the fixed
+-- 4-element table like elementForGuid above, for the same reason (nothing
+-- extra to keep in sync).
+function TotemBar.elementForOwnedTotemName(activeTotems, elements, name, ownerName, playerName)
+    if not activeTotems or not name or not ownerName or not playerName then
+        return nil
+    end
+    if ownerName ~= playerName then
+        return nil
+    end
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local rec = activeTotems[element]
+        if rec and rec.totemName and TotemBar.totemNameMatches(rec.totemName, name) then
+            return element
+        end
+    end
+    return nil
+end
+
+-- Pure: which element (if any) is a CANDIDATE for the generic "<Name> dies."
+-- fallback -- name-matches an active record AND that record already has a
+-- latched rec.guid? The "dies." line carries no owner, so name alone is not
+-- enough to trust blindly (an unrelated mob sharing a totem's plain name
+-- would otherwise evict a live totem); requiring an already-latched GUID
+-- means the caller can go verify THAT SPECIFIC unit via
+-- UnitExists/UnitHealth/UnitIsDeadOrGhost (TotemBar.totemDestroyed, same
+-- verdict function the liveness poll uses) before evicting -- a
+-- confirmation query, not blind trust in the chat line. Returns the
+-- candidate only; the caller still has to run that verification.
+function TotemBar.elementForDiesLineCandidate(activeTotems, elements, name)
+    if not activeTotems or not name then
+        return nil
+    end
+    for i = 1, table.getn(elements) do
+        local element = elements[i]
+        local rec = activeTotems[element]
+        if rec and rec.totemName and rec.guid and TotemBar.totemNameMatches(rec.totemName, name) then
+            return element
+        end
+    end
+    return nil
 end
 
 -- Out-of-mana dim level. Blizzard's own "unusable" grey from FrameXML
@@ -268,8 +665,19 @@ TotemBar.GCD_MAX = 1.6
 -- "cooldown". Every input may be nil -- an unknown never blocks, exactly like
 -- notEnoughMana/confidentNoneOut. Mana is reported first because it is the one
 -- the player can act on.
-function TotemBar.castGateReason(cost, mana, cdStart, cdDuration, gcdMax, clearcasting)
-    if not clearcasting and TotemBar.notEnoughMana(cost, mana) then
+--
+-- NO CLEARCASTING EXEMPTION (removed 2026-08-28, player-reported bug). This gate
+-- used to stand down entirely while Clearcasting (Elemental Focus) was up, on the
+-- assumption that it zeroes the next cast's cost. It does NOT cover totems --
+-- Elemental Focus applies to the shaman's damage spells only, so a totem still
+-- costs full price while Clearcasting is up. Since totems are the only thing this
+-- addon casts, that exemption disabled the mana gate outright for a shaman who
+-- crits regularly: the client refused a Magma Totem for lack of mana while the
+-- timer had already been recorded, so the bar showed a countdown for a totem that
+-- was never placed. A 6th argument is still ACCEPTED and ignored (Lua drops extra
+-- args) so no stale caller can quietly re-enable it.
+function TotemBar.castGateReason(cost, mana, cdStart, cdDuration, gcdMax)
+    if TotemBar.notEnoughMana(cost, mana) then
         return "mana"
     end
     if cdStart and cdDuration and cdStart > 0 and cdDuration > (gcdMax or TotemBar.GCD_MAX) then
@@ -295,8 +703,7 @@ local function computeCastBlock(element, totemName)
             cdStart, cdDuration = GetSpellCooldown(idx, BOOKTYPE_SPELL)
         end
     end
-    return TotemBar.castGateReason(cost, mana, cdStart, cdDuration,
-        TotemBar.GCD_MAX, TotemBar.hasClearcasting and TotemBar.hasClearcasting())
+    return TotemBar.castGateReason(cost, mana, cdStart, cdDuration, TotemBar.GCD_MAX)
 end
 
 -- This runs INSIDE the CastSpellByName hook, i.e. in front of every totem cast
@@ -387,6 +794,12 @@ function TotemBar.recordCast(element, totemName)
         -- Latched by ui.lua once GetTotemInfo reports this slot active under
         -- this record's totem name; see TotemBar.rangeTintActive below.
         gtiTracked = false,
+        -- Latched opportunistically by the UNIT_CASTEVENT/UNIT_MODEL_CHANGED
+        -- hooks below (see "Destroyed-totem detection (GUID liveness)"), NOT
+        -- by recordCast itself -- 1.12 gives no return value naming the
+        -- newly summoned unit at cast time. A fresh table every call means a
+        -- re-cast on this element can never inherit a previous totem's guid.
+        guid = nil,
     }
     -- Kept for revokeRecentCast below: if this cast turns out to have been
     -- refused, the honest correction is the record as it was BEFORE the press,
@@ -398,6 +811,14 @@ function TotemBar.recordCast(element, totemName)
         at = rec.start,
     }
     TotemBar.activeTotems[element] = rec
+    -- A REAL cast landing on this element proves whatever this addon
+    -- previously believed was destroyed there is no longer relevant --
+    -- clear the tombstone immediately so resolveRemaining trusts GTI again
+    -- for this element's new totem right away, instead of waiting out the
+    -- old totem's now-meaningless expiry stamp. Only reached on an actual
+    -- recorded cast (the refused-cast early return above never gets here),
+    -- matching "a new cast clears the tombstone", not "an attempted one".
+    TotemBar.destroyedTombstone[element] = nil
     -- Sticky session evidence for confidentNoneOut() below. Deliberately NOT
     -- derived from activeTotems' occupancy: ui.lua's timer tick evicts each
     -- record the moment it expires, and clearActiveTotems() wipes the table
@@ -548,7 +969,10 @@ function TotemBar.messageSet(list)
 end
 
 -- Pure: should a global failure event revoke lastAttempt's totem timer?
--- Returns the element and totem name to revoke, or nil, nil.
+-- Returns the element and totem name to revoke (or nil, nil), plus a third
+-- value that is true when the attributed attempt was a Totemic Recall (see
+-- the recall attempts note on castRecallNoQueue below) -- the caller then
+-- restores the recall-wiped tracking instead of revoking a single element.
 --
 --   lastAttempt   the last thing this addon's hooks saw the client attempt
 --                  (ANY spell -- see noteCastAttempt above), or nil.
@@ -565,16 +989,16 @@ end
 --                  missing/empty allowlist) fails CLOSED -- no revoke -- same
 --                  policy as an unattributable failure above.
 function TotemBar.attributeCastFailure(lastAttempt, now, window, message, allowlist)
-    if not lastAttempt or not lastAttempt.element then
-        return nil, nil
+    if not lastAttempt or not (lastAttempt.element or lastAttempt.recall) then
+        return nil, nil, nil
     end
     if not lastAttempt.at or not now or not window or (now - lastAttempt.at) > window then
-        return nil, nil
+        return nil, nil, nil
     end
     if message ~= nil and (not allowlist or not allowlist[message]) then
-        return nil, nil
+        return nil, nil, nil
     end
-    return lastAttempt.element, lastAttempt.name
+    return lastAttempt.element, lastAttempt.name, lastAttempt.recall
 end
 
 -- ===== Universal cast hooks: catch totem casts from ANY path =====
@@ -726,7 +1150,19 @@ if CreateFrame then
             end
             -- No name, no revoke. An unnamed failure could just as well be
             -- the Lightning Bolt the player pressed a moment after the totem.
-            if not name or not TotemBar.elementOf(name) then
+            if not name then
+                return
+            end
+            -- A failed Totemic Recall undoes the recall's tracking WIPE, not a
+            -- single element's timer (see restoreRecalledTotems below; the
+            -- window check lives there, same role revokeRecentCast's own
+            -- record-age check plays for the element casts).
+            if name == RECALL_SPELL_NAME then
+                TotemBar.restoreRecalledTotems()
+                TotemBar.lastCastAttempt = nil
+                return
+            end
+            if not TotemBar.elementOf(name) then
                 return
             end
             TotemBar.revokeRecentCast(name)
@@ -742,9 +1178,14 @@ if CreateFrame then
                     castFailureMessages = buildCastFailureMessages()
                 end
             end
-            local element, name = TotemBar.attributeCastFailure(TotemBar.lastCastAttempt,
+            local element, name, recall = TotemBar.attributeCastFailure(TotemBar.lastCastAttempt,
                 GetTime(), TotemBar.CAST_FAIL_WINDOW, message, castFailureMessages)
-            if element then
+            if recall then
+                -- The attributed attempt was a Totemic Recall: undo the
+                -- recall's tracking wipe instead of revoking one element.
+                TotemBar.restoreRecalledTotems()
+                TotemBar.lastCastAttempt = nil
+            elseif element then
                 TotemBar.revokeRecentCast(name)
                 -- Consume: a second event for the SAME refusal (e.g.
                 -- SPELLCAST_FAILED right after UI_ERROR_MESSAGE) must not
@@ -752,6 +1193,183 @@ if CreateFrame then
                 -- reuse this now-stale attempt either.
                 TotemBar.lastCastAttempt = nil
             end
+        end
+    end)
+end
+
+-- ===== GUID latch + destruction signals (destroyed-totem detection) =====
+-- Wires the two latch paths, the CHAT_MSG_COMBAT_FRIENDLY_DEATH primary
+-- signal, and the UNIT_DIED fast-path (GUID match + GUID-free fallback)
+-- documented in "Destroyed-totem detection (GUID liveness)" /
+-- "Rank-tolerant name match + destruction signals" above onto
+-- TotemBar.activeTotems. Every path fails silently (no latch, no evict) on
+-- a client without SuperWoW/nampower -- this block adds nothing to that
+-- baseline beyond CHAT_MSG_COMBAT_FRIENDLY_DEATH, which is native 1.12 and
+-- needs neither. The liveness POLL itself (which also clears a record) lives
+-- in ui.lua's UpdateTimerDisplays, gated on a record having a rec.guid.
+if CreateFrame then
+    local guidFrame = CreateFrame("Frame", "TotemBarGuidFrame", UIParent)
+    -- UNIT_MODEL_CHANGED and CHAT_MSG_COMBAT_FRIENDLY_DEATH are native 1.12
+    -- -- safe to register directly, no pcall needed.
+    guidFrame:RegisterEvent("UNIT_MODEL_CHANGED")
+    guidFrame:RegisterEvent("CHAT_MSG_COMBAT_FRIENDLY_DEATH")
+    -- UNIT_CASTEVENT (SuperWoW) and UNIT_DIED (nampower) may not exist.
+    -- pcall-guarded exactly like core/pulsecal.lua's own UNIT_CASTEVENT
+    -- registration, so an unknown event name can never break this frame.
+    pcall(function() guidFrame:RegisterEvent("UNIT_CASTEVENT") end)
+    pcall(function() guidFrame:RegisterEvent("UNIT_DIED") end)
+
+    guidFrame:SetScript("OnEvent", function()
+        if event == "UNIT_CASTEVENT" then
+            -- SuperWoW: casterGUID, targetGUID, type, spellId, castTime.
+            -- 2026-08-20 event tap: the pulse SPELL's name is NOT the
+            -- totem's own name (Searing Totem's pulse is "Searing Bolt",
+            -- Healing Stream Totem's is "Healing Stream", ...) -- mapping
+            -- through SpellInfo(arg4) could never match. Keyed off
+            -- UnitName(arg1) instead (arg1 is the TOTEM's own casterGUID);
+            -- SpellInfo/arg4 are no longer needed for this latch at all.
+            if not arg1 or type(UnitName) ~= "function" then
+                return
+            end
+            local unitName = UnitName(arg1)
+            if not unitName then
+                return
+            end
+            -- Owner check (adversarial-review finding #2): totem NAME alone
+            -- is not unique -- another shaman's same-type totem pulsing
+            -- nearby would otherwise latch onto OUR element. See
+            -- TotemBar.shouldLatchGuidFromCastEvent's own comment.
+            local ownerName = UnitName(arg1 .. "owner")
+            local playerName = UnitName("player")
+            for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+                local element = TotemBar.TOTEM_ELEMENTS[i]
+                local rec = TotemBar.activeTotems[element]
+                if TotemBar.shouldLatchGuidFromCastEvent(rec, unitName, ownerName, playerName) then
+                    rec.guid = arg1
+                    return
+                end
+            end
+            return
+        end
+
+        if event == "UNIT_MODEL_CHANGED" then
+            local unit = arg1
+            if not unit or type(UnitName) ~= "function" then
+                return
+            end
+            local unitName = UnitName(unit)
+            if not unitName then
+                return
+            end
+            -- 2026-08-20 event tap: UnitName(unit) here is RANKED ("Searing
+            -- Totem VI"), never the bare book name recordCast stores -- so
+            -- this can no longer go through TotemBar.elementOf (an exact
+            -- static-map lookup); it scans activeTotems directly via
+            -- shouldLatchGuidFromModelChanged's rank-tolerant match instead.
+            local ownerName = UnitName(unit .. "owner")
+            local playerName = UnitName("player")
+            for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+                local element = TotemBar.TOTEM_ELEMENTS[i]
+                local rec = TotemBar.activeTotems[element]
+                if TotemBar.shouldLatchGuidFromModelChanged(rec, unitName, ownerName, playerName) then
+                    local exists, guid
+                    if type(UnitExists) == "function" then
+                        exists, guid = UnitExists(unit)
+                    end
+                    if exists and guid then
+                        rec.guid = guid
+                    end
+                    return
+                end
+            end
+            return
+        end
+
+        -- Primary destruction signal (2026-08-20 event tap): TurtleWoW
+        -- emits a totem's own death as CHAT_MSG_COMBAT_FRIENDLY_DEATH with
+        -- arg1 literally "<Name> (<Owner>) is destroyed." -- GUID-free and
+        -- PvP-safe (needs neither latch path above to have ever fired at
+        -- all). The generic vanilla "<Name> dies." form is accepted as a
+        -- second, stricter form: since it carries no owner, it only evicts
+        -- a candidate that already has a latched GUID, and only after
+        -- verifying THAT GUID via TotemBar.totemDestroyed (the same
+        -- UnitExists/UnitHealth/UnitIsDeadOrGhost verdict the liveness poll
+        -- uses) -- a confirmation query, not blind trust in the chat line.
+        if event == "CHAT_MSG_COMBAT_FRIENDLY_DEATH" then
+            local line = arg1
+            if not line or type(UnitName) ~= "function" then
+                return
+            end
+            local playerName = UnitName("player")
+            local name, owner = TotemBar.parseDestroyedLine(line)
+            if name and owner then
+                local element = TotemBar.elementForOwnedTotemName(TotemBar.activeTotems,
+                    TotemBar.TOTEM_ELEMENTS, name, owner, playerName)
+                if element then
+                    TotemBar.evictDestroyedTotem(element)
+                end
+                return
+            end
+            local diesName = TotemBar.parseDiesLine(line)
+            if diesName then
+                local element = TotemBar.elementForDiesLineCandidate(TotemBar.activeTotems,
+                    TotemBar.TOTEM_ELEMENTS, diesName)
+                if element then
+                    local rec = TotemBar.activeTotems[element]
+                    local exists, guid, health, deadOrGhost = nil, nil, nil, nil
+                    if type(UnitExists) == "function" then
+                        exists, guid = UnitExists(rec.guid)
+                    end
+                    if exists then
+                        if type(UnitHealth) == "function" then
+                            health = UnitHealth(rec.guid)
+                        end
+                        if type(UnitIsDeadOrGhost) == "function" then
+                            deadOrGhost = UnitIsDeadOrGhost(rec.guid)
+                        end
+                    end
+                    if TotemBar.totemDestroyed(exists, health, deadOrGhost) then
+                        TotemBar.evictDestroyedTotem(element)
+                    end
+                end
+            end
+            return
+        end
+
+        if event == "UNIT_DIED" then
+            -- Deliberately NO UnitName/UnitExists lookup here for the
+            -- PRIMARY match -- by the time UNIT_DIED fires, further queries
+            -- against the unit were a documented risk (unverified). arg1
+            -- (whatever GUID form this build hands it) is compared directly
+            -- against the already-latched rec.guid values via
+            -- TotemBar.guidsEqual, so a "0x"/case mismatch between the two
+            -- events cannot cause a silent miss.
+            local element = TotemBar.elementForGuid(TotemBar.activeTotems,
+                TotemBar.TOTEM_ELEMENTS, arg1, TotemBar.guidsEqual)
+            if not element and arg1 and type(UnitName) == "function" then
+                -- GUID-free fallback (2026-08-20 event tap: UnitName/owner
+                -- DO resolve at the exact death instant on this client, for
+                -- both the totem's own name and its "<unit>owner" token --
+                -- see the CHAT_MSG_COMBAT_FRIENDLY_DEATH/UNIT_DIED fixture
+                -- pair) -- covers a totem whose GUID was never latched by
+                -- either latch path at all.
+                local unitName = UnitName(arg1)
+                local ownerName = UnitName(arg1 .. "owner")
+                local playerName = UnitName("player")
+                element = TotemBar.elementForOwnedTotemName(TotemBar.activeTotems,
+                    TotemBar.TOTEM_ELEMENTS, unitName, ownerName, playerName)
+            end
+            if element then
+                -- Same tombstoning eviction the liveness poll uses (see
+                -- TotemBar.evictDestroyedTotem) -- a UNIT_DIED-triggered
+                -- clear must protect the display from GTI's blind timer
+                -- exactly like the poll path does, or this fast-path would
+                -- reintroduce the same "cleared here, resurrected by GTI a
+                -- moment later" bug for the one case it exists to short-
+                -- circuit fastest.
+                TotemBar.evictDestroyedTotem(element)
+            end
+            return
         end
     end)
 end
@@ -837,6 +1455,63 @@ function TotemBar.clearActiveTotems()
     for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
         TotemBar.activeTotems[TotemBar.TOTEM_ELEMENTS[i]] = nil
     end
+end
+
+-- ===== Undoing a recall wipe a failure event proves wrong =====
+--
+-- The recall counterpart of revokeRecentCast above, closing the same
+-- phantom-state gap from the other direction: the element casts' bug was a
+-- timer for a totem that is NOT standing; a refused Totemic Recall's bug was
+-- NO timers for totems that ARE still standing. recallReady() is only the
+-- pre-check -- a press that passes it can still be refused server-side
+-- (movement, stun, silence, latency). Every recall path therefore wipes
+-- through recallWipeActiveTotems below, which keeps a snapshot of what it
+-- destroyed; when TotemBarCastFailFrame attributes a failure event to the
+-- recall (via lastCastAttempt.recall -- set in castRecallNoQueue, the one
+-- choke point every recall cast goes through), restoreRecalledTotems puts the
+-- snapshot back.
+
+-- Snapshot of the records the most recent recall wiped: { at =, recs =
+-- element -> record }. Only meaningful within CAST_FAIL_WINDOW of `at`.
+TotemBar.lastRecallWipe = nil
+
+-- Wipes the tracking for a recall cast that just went out, remembering what
+-- was destroyed so a failure event can restore it (see above). All recall
+-- call sites use this instead of a bare clearActiveTotems().
+function TotemBar.recallWipeActiveTotems()
+    local recs = {}
+    for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+        local element = TotemBar.TOTEM_ELEMENTS[i]
+        recs[element] = TotemBar.activeTotems[element]
+    end
+    TotemBar.lastRecallWipe = { at = GetTime(), recs = recs }
+    TotemBar.clearActiveTotems()
+end
+
+-- Restores the records the last recall wiped, because a failure event proved
+-- the recall never went through. Mirrors revokeRecentCast's policies: the
+-- snapshot must be recent (same CAST_FAIL_WINDOW -- an old snapshot means the
+-- failure is somebody else's), it is consumed on use (a second event for the
+-- same refusal must not restore again), and a slot a NEW cast has already
+-- refilled is left alone -- that record is younger truth than the snapshot.
+function TotemBar.restoreRecalledTotems()
+    local wiped = TotemBar.lastRecallWipe
+    TotemBar.lastRecallWipe = nil
+    if not wiped or not wiped.at or not wiped.recs then
+        return false
+    end
+    if (GetTime() - wiped.at) > TotemBar.CAST_FAIL_WINDOW then
+        return false
+    end
+    local restored = false
+    for i = 1, table.getn(TotemBar.TOTEM_ELEMENTS) do
+        local element = TotemBar.TOTEM_ELEMENTS[i]
+        if wiped.recs[element] and not TotemBar.activeTotems[element] then
+            TotemBar.activeTotems[element] = wiped.recs[element]
+            restored = true
+        end
+    end
+    return restored
 end
 
 -- Is at least one totem currently out? Used to avoid wasting Totemic Recall's
@@ -995,6 +1670,21 @@ local function castRecallNoQueue()
     else
         CastSpellByName(RECALL_SPELL_NAME)
     end
+    -- Note the recall as the last cast attempt, so TotemBarCastFailFrame can
+    -- attribute a failure event to it and undo the tracking wipe (see
+    -- restoreRecalledTotems above). Set AFTER the cast call on purpose: the
+    -- plain-cast fallback goes through this addon's own CastSpellByName hook,
+    -- which records a non-totem attempt for it -- this overwrite corrects
+    -- that to the recall (the NoQueue path is not hooked and needs it too).
+    -- Deliberately shaped like noteCastAttempt's records, plus the `recall`
+    -- flag attributeCastFailure and the fail handler key off; element is nil
+    -- because a recall names no single element -- it wipes all four.
+    TotemBar.lastCastAttempt = {
+        element = nil,
+        name = RECALL_SPELL_NAME,
+        recall = true,
+        at = GetTime(),
+    }
 end
 
 -- pure: does GetSpellCooldown's (start, duration) pair describe a cooldown
@@ -1114,8 +1804,11 @@ function TotemBar.manualRecall()
     if TotemBar.snapshotRecallCost then TotemBar.snapshotRecallCost() end
     -- Totemic Recall drops every active totem at once; clear own-tracking so
     -- the icons' countdowns disappear too (GetTotemInfo, if present, will also
-    -- reflect this).
-    TotemBar.clearActiveTotems()
+    -- reflect this). Wiped through the snapshotting helper: recallReady() was
+    -- only the PRE-check, and a press it let through can still be refused
+    -- server-side -- the failure events then restore what this wiped (see
+    -- restoreRecalledTotems above).
+    TotemBar.recallWipeActiveTotems()
     return action
 end
 
@@ -1146,7 +1839,12 @@ function TotemBar.recallAndCastAll()
     if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
        and TotemBar.recallReady() and TotemBar.anyTotemOut() then
         castRecallNoQueue()
-        TotemBar.clearActiveTotems()
+        -- Snapshotting wipe (see restoreRecalledTotems): in THIS path the
+        -- castAll below immediately overwrites lastCastAttempt with its totem
+        -- casts, so a recall refusal is rarely attributable here -- but the
+        -- snapshot costs nothing and any slot castAll refills is protected by
+        -- the restore's younger-record rule anyway.
+        TotemBar.recallWipeActiveTotems()
     end
     TotemBar.castAll()
     TotemBar.castState.lastDeployTime = now
@@ -1177,7 +1875,11 @@ function TotemBar.dropSetKey(keystate)
         if TotemBar.shouldRecall(autoRecall, TotemBar.castState.lastDeployTime, now, guard)
            and TotemBar.recallReady() and TotemBar.anyTotemOut() then
             castRecallNoQueue()
-            TotemBar.clearActiveTotems()
+            -- Snapshotting wipe (see restoreRecalledTotems): the down stroke
+            -- places nothing itself, so a refused recall here IS attributable
+            -- -- the failure event restores the timers before the release's
+            -- castAll runs.
+            TotemBar.recallWipeActiveTotems()
         end
     else
         -- Release (or nil fallback): place the set now, in this hardware frame.
@@ -1215,12 +1917,40 @@ function TotemBar.DumpTimerState()
         local rec = activeTotems[element]
         if rec then
             local rem = TotemBar.remaining(rec.start, rec.duration, now)
+            -- Raw destroyed-totem liveness reads (see "Destroyed-totem
+            -- detection (GUID liveness)" above) -- only meaningful once
+            -- rec.guid was latched; nil/nil/nil otherwise means "no GUID
+            -- yet", not "unit resolved as gone".
+            local existsRaw, healthRaw, deadRaw = nil, nil, nil
+            if rec.guid then
+                if type(UnitExists) == "function" then
+                    existsRaw = UnitExists(rec.guid)
+                end
+                if type(UnitHealth) == "function" then
+                    healthRaw = UnitHealth(rec.guid)
+                end
+                if type(UnitIsDeadOrGhost) == "function" then
+                    deadRaw = UnitIsDeadOrGhost(rec.guid)
+                end
+            end
             out = out .. element .. ": spell='" .. tostring(rec.totemName) .. "'"
                 .. " start=" .. tostring(rec.start)
                 .. " duration=" .. tostring(rec.duration)
-                .. " remaining=" .. tostring(rem) .. "\n"
+                .. " remaining=" .. tostring(rem)
+                .. " guid=" .. tostring(rec.guid)
+                .. " exists=" .. tostring(existsRaw)
+                .. " health=" .. tostring(healthRaw)
+                .. " deadOrGhost=" .. tostring(deadRaw) .. "\n"
         else
-            out = out .. element .. ": (no record)\n"
+            -- Tombstone status (see TotemBar.destroyedTombstone/
+            -- tombstoneActive) is most relevant HERE -- a record just
+            -- evicted as destroyed shows up as "no record", and this line
+            -- is what confirms GTI is (correctly) being ignored for it
+            -- rather than resurrecting the countdown a moment later.
+            local tomb = TotemBar.destroyedTombstone[element]
+            local tombActive = TotemBar.tombstoneActive(tomb, now)
+            out = out .. element .. ": (no record) tombstone=" .. tostring(tomb)
+                .. " tombstoneActive=" .. tostring(tombActive) .. "\n"
         end
     end
 
